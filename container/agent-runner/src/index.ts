@@ -491,6 +491,8 @@ async function runQuery(
 }
 
 async function main(): Promise<void> {
+  log('Container bootstrap started');
+
   let containerInput: ContainerInput;
 
   try {
@@ -499,6 +501,16 @@ async function main(): Promise<void> {
     // Delete the temp file the entrypoint wrote — it contains secrets
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
+
+    // Log token receipt for debugging (DEBUG-04)
+    const oauthToken = containerInput.secrets?.CLAUDE_CODE_OAUTH_TOKEN;
+    if (oauthToken) {
+      const prefix = oauthToken.slice(0, 12);
+      const isValidFormat = oauthToken.startsWith('sk-ant-');
+      log(`Token received via stdin: length=${oauthToken.length}, prefix=${prefix}..., format_ok=${isValidFormat}`);
+    } else {
+      log('WARNING: CLAUDE_CODE_OAUTH_TOKEN not present in secrets — authentication will likely fail');
+    }
   } catch (err) {
     writeOutput({
       status: 'error',
@@ -514,6 +526,8 @@ async function main(): Promise<void> {
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
     sdkEnv[key] = value;
   }
+  const injectedVars = Object.keys(containerInput.secrets ?? {}).filter(k => containerInput.secrets![k]);
+  log(`Environment vars injected from secrets: ${injectedVars.join(', ') || 'none'}`);
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
