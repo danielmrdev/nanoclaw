@@ -26,6 +26,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { validateToken } from './token-validator.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -152,7 +153,6 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -224,15 +224,83 @@ function buildVolumeMounts(
 }
 
 function readKeychainToken(): string | undefined {
+  logger.debug(
+    'Attempting to read CLAUDE_CODE_OAUTH_TOKEN from macOS Keystore',
+  );
   try {
-    const json = execSync(
-      'security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null',
+    const raw = execSync(
+      'security find-generic-password -s "Claude Code-credentials" -w',
       { encoding: 'utf8', timeout: 5000 },
     ).trim();
-    if (!json) return undefined;
-    const creds = JSON.parse(json);
-    return creds?.claudeAiOauth?.accessToken || undefined;
-  } catch {
+
+    if (!raw) {
+      logger.warn('Keystore returned empty value for Claude Code-credentials');
+      return undefined;
+    }
+
+    logger.debug(
+      { byteLength: Buffer.byteLength(raw, 'utf8') },
+      'Keystore read succeeded — parsing JSON',
+    );
+
+    let creds: unknown;
+    try {
+      creds = JSON.parse(raw);
+    } catch (parseErr) {
+      logger.error(
+        {
+          error:
+            parseErr instanceof Error ? parseErr.message : String(parseErr),
+        },
+        'Failed to parse Keystore JSON',
+      );
+      return undefined;
+    }
+
+    // Log JSON structure (keys only, never token value)
+    const topLevelKeys = Object.keys(creds as Record<string, unknown>);
+    const oauthKeys = (creds as any)?.claudeAiOauth
+      ? Object.keys((creds as any).claudeAiOauth)
+      : [];
+    logger.debug(
+      { topLevelKeys, oauthKeys },
+      'Keystore JSON parsed — structure logged (no token value)',
+    );
+
+    const validation = validateToken(creds);
+    if (!validation.valid) {
+      logger.warn(
+        { reason: validation.reason },
+        'Keystore token failed validation',
+      );
+      return undefined;
+    }
+
+    const c = creds as any;
+    const token: string = c.claudeAiOauth.accessToken;
+    const expiresAt: number | undefined = c.claudeAiOauth.expiresAt;
+    const email: string | undefined = c.claudeAiOauth.account?.emailAddress;
+
+    logger.debug(
+      {
+        tokenLength: token.length,
+        tokenPrefix: token.slice(0, 12) + '...',
+        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : 'not set',
+        account: email ?? 'unknown',
+        expiresInMs: expiresAt ? expiresAt - Date.now() : null,
+      },
+      'Token metadata (value masked)',
+    );
+
+    return token;
+  } catch (err) {
+    logger.error(
+      {
+        error: err instanceof Error ? err.message : String(err),
+        code: (err as any)?.status,
+      },
+      'Keystore read failed (security command error)',
+    );
     return undefined;
   }
 }
@@ -252,10 +320,17 @@ function readSecrets(): Record<string, string> {
 
   // If not in .env, read from macOS keychain (stays in sync with ccswitch)
   if (!secrets['CLAUDE_CODE_OAUTH_TOKEN']) {
+    logger.debug(
+      'CLAUDE_CODE_OAUTH_TOKEN not in .env — attempting Keystore read',
+    );
     const keychainToken = readKeychainToken();
     if (keychainToken) {
-      logger.debug('Using CLAUDE_CODE_OAUTH_TOKEN from macOS keychain');
+      logger.info('CLAUDE_CODE_OAUTH_TOKEN loaded from macOS Keystore');
       secrets['CLAUDE_CODE_OAUTH_TOKEN'] = keychainToken;
+    } else {
+      logger.warn(
+        'CLAUDE_CODE_OAUTH_TOKEN unavailable: not in .env and Keystore read failed or returned invalid token',
+      );
     }
   }
 
