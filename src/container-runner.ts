@@ -309,7 +309,7 @@ function readKeychainToken(): string | undefined {
  * Read allowed secrets from .env for passing to the container via stdin.
  * Secrets are never written to disk or mounted as files.
  */
-function readSecrets(): Record<string, string> {
+export function readSecrets(): Record<string, string> {
   const secrets = readEnvFile([
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
@@ -318,7 +318,29 @@ function readSecrets(): Record<string, string> {
     'BACKUP_GDRIVE_FOLDER',
   ]);
 
-  // If not in .env, read from macOS keychain (stays in sync with ccswitch)
+  // Validate token sourced from .env (Keystore path already validates in readKeychainToken)
+  if (secrets['CLAUDE_CODE_OAUTH_TOKEN']) {
+    const envToken = secrets['CLAUDE_CODE_OAUTH_TOKEN'].trim();
+    if (!envToken) {
+      // Empty string after trim — treat as absent, fall through to Keystore
+      delete secrets['CLAUDE_CODE_OAUTH_TOKEN'];
+    } else {
+      // Wrap token in the creds structure validateToken expects
+      const fakeCreds = { claudeAiOauth: { accessToken: envToken } };
+      const validation = validateToken(fakeCreds);
+      if (!validation.valid) {
+        logger.error(
+          { reason: validation.reason },
+          '.env CLAUDE_CODE_OAUTH_TOKEN failed validation — removing from secrets',
+        );
+        delete secrets['CLAUDE_CODE_OAUTH_TOKEN'];
+      } else {
+        logger.debug('CLAUDE_CODE_OAUTH_TOKEN from .env passed validation');
+      }
+    }
+  }
+
+  // If not in .env (or removed due to validation failure), read from macOS keychain
   if (!secrets['CLAUDE_CODE_OAUTH_TOKEN']) {
     logger.debug(
       'CLAUDE_CODE_OAUTH_TOKEN not in .env — attempting Keystore read',
