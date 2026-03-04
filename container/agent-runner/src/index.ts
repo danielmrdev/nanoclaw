@@ -508,6 +508,15 @@ async function main(): Promise<void> {
       const prefix = oauthToken.slice(0, 12);
       const isValidFormat = oauthToken.startsWith('sk-ant-');
       log(`Token received via stdin: length=${oauthToken.length}, prefix=${prefix}..., format_ok=${isValidFormat}`);
+      if (!isValidFormat) {
+        log('ERROR: Token format invalid — exiting before SDK authentication attempt');
+        writeOutput({
+          status: 'error',
+          result: null,
+          error: 'Container received token with invalid format (expected sk-ant- prefix). Check CLAUDE_CODE_OAUTH_TOKEN in .env or macOS Keystore.'
+        });
+        process.exit(1);
+      }
     } else {
       log('WARNING: CLAUDE_CODE_OAUTH_TOKEN not present in secrets — authentication will likely fail');
     }
