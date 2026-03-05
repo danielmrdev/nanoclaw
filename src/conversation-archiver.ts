@@ -16,6 +16,11 @@ export interface ArchiveResult {
   skipped: string[];
 }
 
+export interface DeleteResult {
+  deleted: string[];
+  skipped: string[];
+}
+
 export interface ArchiveOptions {
   groupFolder: string;
   /** Override for GROUPS_DIR — used in tests to point at a temp directory. */
@@ -126,4 +131,102 @@ export function archiveOldConversations(opts: ArchiveOptions): ArchiveResult {
   }
 
   return { archived, skipped };
+}
+
+/**
+ * Delete archived conversation files older than DELETE_AFTER_DAYS (default 90).
+ * Gated on monthly recap coverage — if no monthly recap has run, nothing is deleted.
+ * Scans conversations/archive/YYYY-MM/ subdirectories for .md files.
+ */
+export function deleteOldArchives(opts: ArchiveOptions): DeleteResult {
+  const { groupFolder, groupsDir = GROUPS_DIR } = opts;
+
+  // Read env var at call time so test stubs (vi.stubEnv) take effect
+  const deleteAfterDays = parseInt(
+    process.env.CONVERSATION_DELETE_AFTER_DAYS || '90',
+    10,
+  );
+
+  // Gate: monthly recap must have run at least once
+  const lastMonthlyRecap = getLastRecapTimestamp(groupFolder, 'monthly');
+  if (!lastMonthlyRecap) {
+    logger.debug(
+      { groupFolder },
+      'No monthly recap coverage yet — skipping archive deletion',
+    );
+    return { deleted: [], skipped: [] };
+  }
+
+  const archiveDir = path.join(
+    groupsDir,
+    groupFolder,
+    'conversations',
+    'archive',
+  );
+
+  if (!fs.existsSync(archiveDir)) {
+    return { deleted: [], skipped: [] };
+  }
+
+  const deleted: string[] = [];
+  const skipped: string[] = [];
+
+  let monthDirs: string[];
+  try {
+    monthDirs = fs.readdirSync(archiveDir).filter((entry) => {
+      // Only YYYY-MM directories
+      return /^\d{4}-\d{2}$/.test(entry);
+    });
+  } catch (err) {
+    logger.warn({ groupFolder, err }, 'Failed to read archive directory');
+    return { deleted: [], skipped: [] };
+  }
+
+  for (const monthDir of monthDirs) {
+    const monthPath = path.join(archiveDir, monthDir);
+
+    let files: string[];
+    try {
+      files = fs.readdirSync(monthPath).filter((f) => f.endsWith('.md'));
+    } catch (err) {
+      logger.warn({ groupFolder, monthDir, err }, 'Failed to read archive month directory');
+      continue;
+    }
+
+    for (const filename of files) {
+      const filePath = path.join(monthPath, filename);
+
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(filePath);
+      } catch (err) {
+        logger.warn({ groupFolder, filename, err }, 'Failed to stat archive file');
+        skipped.push(filename);
+        continue;
+      }
+
+      const ageMs = Date.now() - stat.mtimeMs;
+      const ageDays = ageMs / (1000 * 60 * 60 * 24);
+
+      if (ageDays > deleteAfterDays) {
+        try {
+          fs.unlinkSync(filePath);
+          deleted.push(filename);
+          logger.info({ groupFolder, filename }, 'Deleted old archive file');
+        } catch (err) {
+          logger.warn({ groupFolder, filename, err }, 'Failed to delete archive file');
+          skipped.push(filename);
+        }
+      } else {
+        skipped.push(filename);
+      }
+    }
+  }
+
+  logger.info(
+    { groupFolder, deleted: deleted.length, skipped: skipped.length },
+    'Archive deletion complete',
+  );
+
+  return { deleted, skipped };
 }
