@@ -61,7 +61,7 @@ function buildRenderer(): Renderer {
       const prefix = token.ordered ? `${(token.start as number) + i}.` : '•';
       return `${prefix} ${inner}`;
     });
-    return `${items.join('\n')}\n`;
+    return `${items.join('\n')}\n\n`;
   };
 
   renderer.hr = function () {
