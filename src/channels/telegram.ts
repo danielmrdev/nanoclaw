@@ -360,6 +360,17 @@ ${systemStatusBody}`;
       logger.error({ err: err.message }, 'Telegram bot error');
     });
 
+    // Register bot commands in Telegram (shows in the "/" menu)
+    await this.bot.api.setMyCommands([
+      { command: 'help',    description: 'Show available commands' },
+      { command: 'ping',    description: 'Check if the bot is online' },
+      { command: 'version', description: 'Show NanoClaw version' },
+      { command: 'status',  description: 'System status report' },
+      { command: 'restart', description: 'Restart NanoClaw' },
+      { command: 'chatid',  description: 'Get this chat registration ID' },
+      { command: 'memory',  description: 'Show memory state' },
+    ]);
+
     // Start polling — returns a Promise that resolves when started
     return new Promise<void>((resolve) => {
       this.bot!.start({
