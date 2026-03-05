@@ -61,33 +61,93 @@ When working as a sub-agent or teammate, only use `send_message` if instructed t
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
 
-## Memory System (3 Layers)
+## Memory Loading Protocol
 
-### 1. Knowledge Base (`knowledge/`)
-Permanent facts organized by category. Read relevant sections at conversation start.
+At the start of every session, load these 4 memory layers in order. This gives you full prior context without asking dm to repeat information.
 
-- `trabajo/` - Work (Better, DWolf, TSAMonster)
-- `salud/` - Health tracking
-- `finanzas/` - Finance management
-- `personal/` - Goals and life areas
-- `herramientas/` - Technical config (calendars, repos, accounts)
+**CRITICAL:** Load in this exact order. Load only what fits in remaining context budget.
 
-**Usage:** Consult for facts about dm. Only suggest updates, never modify without permission.
+### Layer 1: Tacit Knowledge (`tacit/`)
+**What:** Behavior rules and preferences — how dm wants you to respond.
+**Where:** `/workspace/group/tacit/` (files like `preferences.md`, `communication.md`)
+**How:** Read all .md files in alphabetical order. Use highest priority.
+**Why:** These rules are non-negotiable. Always follow them.
+**Token budget:** ~15% of context budget
 
-### 2. Daily Notes (`daily/YYYY-MM/`)
-Temporal context. Record important decisions and events from conversations.
+Example:
+- Read `/workspace/group/tacit/communication.md` first (how to communicate)
+- Read `/workspace/group/tacit/preferences.md` second (preferences and setup)
 
-**Usage:** Check recent daily notes for context. Update current day's note with decisions.
+### Layer 2: Knowledge Base Orientation (`knowledge/_index.md`)
+**What:** Index of permanent facts organized by category, NOT the facts themselves.
+**Where:** `/workspace/group/knowledge/_index.md`
+**How:** Read the index file ONLY. Do NOT load individual knowledge files yet.
+**Why:** The index tells you what dm knows about. Full knowledge base is too large to load at every session; the index is enough to know what to consult later.
+**Token budget:** ~20% of context budget
 
-### 3. Tacit Knowledge (`tacit/`)
-Behavior rules. Read automatically at session start.
+Example:
+- `_index.md` contains category list: `trabajo/`, `salud/`, `finanzas/`, `personal/`, `herramientas/`
+- When dm asks "what's my budget?", you know to read `knowledge/finanzas/` later (not at startup)
 
-- `preferences.md` - Location, platform, technical setup
-- `communication.md` - Style and tone rules
+### Layer 3: Recent Daily Notes (`daily/YYYY-MM/`)
+**What:** Temporal context from the last 3 days — decisions, events, recent updates.
+**Where:** `/workspace/group/daily/YYYY-MM/YYYY-MM-DD.md` (dated files)
+**How:** List all dates in `/workspace/group/daily/YYYY-MM/`, sort newest first, load the last 3 days (or however many exist).
+**Why:** Recent notes give you dm's current state and recent priorities.
+**Token budget:** ~35% of context budget (largest allocation)
 
-**Usage:** Follow these rules always. Never modify.
+Example:
+- Today is 2026-03-05
+- Load `/workspace/group/daily/2026-03/2026-03-05.md` (today)
+- Load `/workspace/group/daily/2026-03/2026-03-04.md` (yesterday)
+- Load `/workspace/group/daily/2026-03/2026-03-03.md` (2 days ago)
 
-### Other
+### Layer 4: Last Conversation (`conversations/`)
+**What:** The most recent conversation file for session-to-session continuity.
+**Where:** `/workspace/group/conversations/*.md` (most recent by file modification time)
+**How:** Find the most recently modified .md file. Read it in full.
+**Why:** If dm's previous session had context or work in progress, the last conversation gives you immediate continuity.
+**Token budget:** ~30% of context budget
+
+Example:
+- List `/workspace/group/conversations/` by modification time
+- Load the most recent file (e.g., `2026-03-05-research-agenda.md`)
+
+### Budget Rules
+
+Total context available for memory: ~8000 tokens (configurable).
+
+Allocations:
+- Tacit (Layer 1): 15% = ~1200 tokens
+- Knowledge (Layer 2): 20% = ~1600 tokens
+- Daily (Layer 3): 35% = ~2800 tokens
+- Conversation (Layer 4): 30% = ~2400 tokens
+
+**If a layer doesn't use its full allocation**, the leftover tokens are available for the next layer. Example:
+- Tacit uses 800 tokens (allocated 1200) → 400 tokens roll to Knowledge
+- Knowledge + rollover = 1600 + 400 = 2000 available
+
+**If you run low on budget**, prioritize Tacit > Daily > Conversation > Knowledge. Stop loading before the budget is exhausted; agent reasoning needs at least 30% of the context window free.
+
+### Implementation
+
+This loading happens **automatically** inside the container at startup. You don't manually load these files. But understand this protocol so you know what context you have available.
+
+**Verification:** At startup, logs will show:
+```
+Memory loaded: 6234 tokens (tacit=1100t, daily=2400t, conv=1900t, know=834t) — 22% budget remaining
+```
+
+This tells you exactly how much of each layer was loaded and how much room you have for reasoning.
+
+If this warning appears:
+```
+WARNING: Memory budget tight (18% remaining). Agent may have limited context for reasoning.
+```
+
+You're near the limit. Consider asking dm to archive old daily notes or conversations to free up space.
+
+### Other Workspace Directories
 - `plans/` - Pending tasks and plans
 - `conversations/` - Conversation history (searchable)
 

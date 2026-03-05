@@ -73,6 +73,12 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS recap_coverage (
+      group_folder TEXT NOT NULL,
+      cadence TEXT NOT NULL,
+      last_recap_timestamp TEXT NOT NULL,
+      PRIMARY KEY (group_folder, cadence)
+    );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -604,6 +610,54 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Recap coverage accessors ---
+
+export function getLastRecapTimestamp(
+  groupFolder: string,
+  cadence: 'daily' | 'weekly' | 'monthly' | 'semester' | 'annual',
+): string | null {
+  const row = db
+    .prepare(
+      'SELECT last_recap_timestamp FROM recap_coverage WHERE group_folder = ? AND cadence = ?',
+    )
+    .get(groupFolder, cadence) as { last_recap_timestamp: string } | undefined;
+  return row?.last_recap_timestamp ?? null;
+}
+
+export function setLastRecapTimestamp(
+  groupFolder: string,
+  cadence: 'daily' | 'weekly' | 'monthly' | 'semester' | 'annual',
+  timestamp: string,
+): void {
+  db.prepare(
+    'INSERT OR REPLACE INTO recap_coverage (group_folder, cadence, last_recap_timestamp) VALUES (?, ?, ?)',
+  ).run(groupFolder, cadence, timestamp);
+}
+
+/**
+ * Get all user messages for a group within a time range.
+ * Excludes bot messages. Used by recap generation.
+ */
+export function getMessagesForDateRange(
+  chatJid: string,
+  fromTimestamp: string,
+  toTimestamp: string,
+  botPrefix: string,
+): NewMessage[] {
+  const sql = `
+    SELECT id, chat_jid, sender, sender_name, content, timestamp
+    FROM messages
+    WHERE chat_jid = ?
+      AND timestamp > ? AND timestamp <= ?
+      AND is_bot_message = 0 AND content NOT LIKE ?
+      AND content != '' AND content IS NOT NULL
+    ORDER BY timestamp
+  `;
+  return db
+    .prepare(sql)
+    .all(chatJid, fromTimestamp, toTimestamp, `${botPrefix}:%`) as NewMessage[];
 }
 
 // --- JSON migration ---
