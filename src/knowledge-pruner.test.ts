@@ -4,6 +4,36 @@ import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Mock embedding-service before importing knowledge-pruner
+vi.mock('./embedding-service.js', () => ({
+  embed: vi.fn(),
+  storeEmbedding: vi.fn(),
+  deleteEmbedding: vi.fn(),
+}));
+
+// Mock db module
+const mockDb = {};
+vi.mock('./db.js', () => ({
+  isSemanticsEnabled: vi.fn(() => false),
+  getDb: vi.fn(() => mockDb),
+}));
+
+// Mock logger
+vi.mock('./logger.js', () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+// Mock config
+vi.mock('./config.js', () => ({
+  GROUPS_DIR: '',
+}));
+
+import { embed, storeEmbedding, deleteEmbedding } from './embedding-service.js';
+import { isSemanticsEnabled } from './db.js';
 import { pruneKnowledgeBase } from './knowledge-pruner.js';
 
 function makeTmpDir(): string {
@@ -32,6 +62,9 @@ describe('pruneKnowledgeBase', () => {
     groupsDir = makeTmpDir();
     groupFolder = 'test-group';
     vi.unstubAllEnvs();
+    vi.clearAllMocks();
+    // Reset isSemanticsEnabled to false by default
+    vi.mocked(isSemanticsEnabled).mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -285,6 +318,104 @@ describe('pruneKnowledgeBase', () => {
     const result = await pruneKnowledgeBase({ groupFolder, groupsDir });
 
     expect(result.factsArchived).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Embedding hooks
+  // ---------------------------------------------------------------------------
+
+  it('partial prune with isSemanticsEnabled=true calls storeEmbedding', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(true);
+    const fakeVec = new Float32Array(768).fill(0.1);
+    vi.mocked(embed).mockResolvedValue(fakeVec);
+
+    const staleDate = daysAgo(200);
+    const freshDate = daysAgo(5);
+    const content = [
+      '# Preferences',
+      '',
+      `## Facts from ${staleDate}`,
+      '',
+      '- Old preference',
+      '',
+      `## Facts from ${freshDate}`,
+      '',
+      '- Current preference',
+      '',
+    ].join('\n');
+
+    writeFile(path.join(groupsDir, groupFolder), 'knowledge/preferences.md', content);
+
+    await pruneKnowledgeBase({ groupFolder, groupsDir });
+
+    // Fire-and-forget: wait for microtasks
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(storeEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      groupFolder,
+      'fact',
+      'knowledge/preferences.md',
+      expect.any(String),
+      fakeVec,
+    );
+  });
+
+  it('full archive with isSemanticsEnabled=true calls deleteEmbedding', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(true);
+
+    const staleDate1 = daysAgo(200);
+    const staleDate2 = daysAgo(250);
+    const content = [
+      '# Preferences',
+      '',
+      `## Facts from ${staleDate1}`,
+      '',
+      '- Old preference A',
+      '',
+      `## Facts from ${staleDate2}`,
+      '',
+      '- Old preference B',
+      '',
+    ].join('\n');
+
+    writeFile(path.join(groupsDir, groupFolder), 'knowledge/preferences.md', content);
+
+    await pruneKnowledgeBase({ groupFolder, groupsDir });
+
+    expect(deleteEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      groupFolder,
+      'fact',
+      'knowledge/preferences.md',
+    );
+  });
+
+  it('isSemanticsEnabled=false skips all embedding calls', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(false);
+
+    const staleDate = daysAgo(200);
+    const freshDate = daysAgo(5);
+    const content = [
+      '# Preferences',
+      '',
+      `## Facts from ${staleDate}`,
+      '',
+      '- Old preference',
+      '',
+      `## Facts from ${freshDate}`,
+      '',
+      '- Current preference',
+      '',
+    ].join('\n');
+
+    writeFile(path.join(groupsDir, groupFolder), 'knowledge/preferences.md', content);
+
+    const result = await pruneKnowledgeBase({ groupFolder, groupsDir });
+
+    expect(result.factsArchived).toBe(1);
+    expect(storeEmbedding).not.toHaveBeenCalled();
+    expect(deleteEmbedding).not.toHaveBeenCalled();
   });
 
   it('archivedFiles contains the correct _archive/ path', async () => {

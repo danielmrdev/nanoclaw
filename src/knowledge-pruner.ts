@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 
+import Database from 'better-sqlite3';
+
 import { GROUPS_DIR } from './config.js';
+import { getDb, isSemanticsEnabled } from './db.js';
+import { deleteEmbedding, embed, storeEmbedding } from './embedding-service.js';
 import { logger } from './logger.js';
 
 /**
@@ -26,6 +30,8 @@ export interface PruneOptions {
   groupFolder: string;
   /** Override for GROUPS_DIR — used in tests to point at a temp directory. */
   groupsDir?: string;
+  /** Override db handle — used in tests. Production code omits this. */
+  db?: Database.Database;
 }
 
 export interface PruneResult {
@@ -112,6 +118,7 @@ function sectionsToContent(sections: Section[]): string {
  */
 export async function pruneKnowledgeBase(opts: PruneOptions): Promise<PruneResult> {
   const { groupFolder, groupsDir = GROUPS_DIR } = opts;
+  const resolvedDb: Database.Database = opts.db ?? getDb();
 
   const knowledgeDir = path.join(groupsDir, groupFolder, 'knowledge');
 
@@ -188,6 +195,11 @@ export async function pruneKnowledgeBase(opts: PruneOptions): Promise<PruneResul
       // All sections stale — move entire file to _archive/
       fs.renameSync(sourcePath, archivePath);
       logger.info({ groupFolder, filename, archivePath }, 'Moved entire knowledge file to archive');
+
+      if (isSemanticsEnabled()) {
+        const relPath = `knowledge/${filename}`;
+        deleteEmbedding(resolvedDb, groupFolder, 'fact', relPath);
+      }
     } else {
       // Partial: write stale sections to archive, rewrite source without them
       const archiveContent = staleSections
@@ -209,6 +221,20 @@ export async function pruneKnowledgeBase(opts: PruneOptions): Promise<PruneResul
         { groupFolder, filename, staleSections: staleSections.length, archivePath },
         'Archived stale sections from knowledge file',
       );
+
+      if (isSemanticsEnabled()) {
+        const relPath = `knowledge/${filename}`;
+        void (async () => {
+          try {
+            const vector = await embed(freshContent);
+            if (vector) {
+              storeEmbedding(resolvedDb, groupFolder, 'fact', relPath, freshContent, vector);
+            }
+          } catch (err) {
+            logger.warn({ err, groupFolder, relPath }, 'Failed to embed knowledge fact after prune');
+          }
+        })();
+      }
     }
 
     factsArchived += staleSections.length;
