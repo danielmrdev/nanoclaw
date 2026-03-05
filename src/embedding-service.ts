@@ -113,6 +113,9 @@ export function storeEmbedding(
         stale.vec_rowid,
       );
       db.prepare('DELETE FROM embedding_meta WHERE id = ?').run(stale.id);
+      db.prepare(
+        `DELETE FROM memory_fts WHERE source_path = ? AND group_folder = ? AND source_type = ?`,
+      ).run(sourcePath, groupFolder, sourceType);
     }
 
     const insertVec = db.prepare(
@@ -133,6 +136,11 @@ export function storeEmbedding(
       vecRowid,
       new Date().toISOString(),
     );
+
+    db.prepare(
+      `INSERT OR REPLACE INTO memory_fts (content, group_folder, source_type, source_path)
+       VALUES (?, ?, ?, ?)`,
+    ).run(text, groupFolder, sourceType, sourcePath);
   });
 
   doInsert();
@@ -161,6 +169,9 @@ export function deleteEmbedding(
   db.transaction(() => {
     db.prepare('DELETE FROM vec_embeddings WHERE rowid = ?').run(row.vec_rowid);
     db.prepare('DELETE FROM embedding_meta WHERE id = ?').run(row.id);
+    db.prepare(
+      `DELETE FROM memory_fts WHERE source_path = ? AND group_folder = ? AND source_type = ?`,
+    ).run(sourcePath, groupFolder, sourceType);
   })();
 }
 

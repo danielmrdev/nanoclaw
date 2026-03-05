@@ -166,6 +166,15 @@ function createSchema(database: Database.Database): void {
       CREATE INDEX IF NOT EXISTS idx_embedding_meta_hash ON embedding_meta(content_hash);
       CREATE INDEX IF NOT EXISTS idx_embedding_meta_group ON embedding_meta(group_folder);
     `);
+    database.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+        content,
+        group_folder UNINDEXED,
+        source_type  UNINDEXED,
+        source_path  UNINDEXED,
+        tokenize = 'unicode61'
+      );
+    `);
   }
 }
 
