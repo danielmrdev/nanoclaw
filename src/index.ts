@@ -45,6 +45,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import { ensureRecapTasks } from './recap-scheduler.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
@@ -536,6 +537,9 @@ async function main(): Promise<void> {
     await wsChannel.connect();
     ensureBetterWorkGroup();
   }
+
+  // Register daily/weekly recap tasks for all active groups (idempotent)
+  ensureRecapTasks();
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
