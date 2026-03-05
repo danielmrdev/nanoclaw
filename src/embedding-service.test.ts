@@ -240,6 +240,127 @@ describe('deleteEmbedding()', () => {
   });
 });
 
+// --- memory_fts FTS5 sync ---
+
+describe('memory_fts sync in storeEmbedding()', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  it('inserts a row into memory_fts with correct fields when storing an embedding', () => {
+    if (!isSemanticsEnabled()) {
+      console.log('sqlite-vec not available, skipping memory_fts tests');
+      return;
+    }
+
+    const db = _getTestDb();
+    const vec = new Float32Array(EMBEDDING_DIM).fill(0.1);
+
+    storeEmbedding(db, 'group-a', 'knowledge', 'notes/file.md', 'hello world', vec);
+
+    const rows = db
+      .prepare('SELECT content, group_folder, source_type, source_path FROM memory_fts WHERE group_folder = ?')
+      .all('group-a') as Array<{ content: string; group_folder: string; source_type: string; source_path: string }>;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].content).toBe('hello world');
+    expect(rows[0].group_folder).toBe('group-a');
+    expect(rows[0].source_type).toBe('knowledge');
+    expect(rows[0].source_path).toBe('notes/file.md');
+  });
+
+  it('replaces the old memory_fts row when content changes (INSERT OR REPLACE)', () => {
+    if (!isSemanticsEnabled()) return;
+
+    const db = _getTestDb();
+    const vec1 = new Float32Array(EMBEDDING_DIM).fill(0.1);
+    const vec2 = new Float32Array(EMBEDDING_DIM).fill(0.9);
+
+    storeEmbedding(db, 'group-a', 'knowledge', 'notes/file.md', 'original text', vec1);
+    storeEmbedding(db, 'group-a', 'knowledge', 'notes/file.md', 'updated text', vec2);
+
+    const rows = db
+      .prepare('SELECT content FROM memory_fts WHERE group_folder = ?')
+      .all('group-a') as Array<{ content: string }>;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].content).toBe('updated text');
+  });
+
+  it('does not write to memory_fts when content hash is unchanged (early exit)', () => {
+    if (!isSemanticsEnabled()) return;
+
+    const db = _getTestDb();
+    const vec = new Float32Array(EMBEDDING_DIM).fill(0.1);
+
+    storeEmbedding(db, 'group-a', 'knowledge', 'notes/file.md', 'same text', vec);
+    // Second call should be a no-op (early exit before transaction)
+    storeEmbedding(db, 'group-a', 'knowledge', 'notes/file.md', 'same text', vec);
+
+    const rows = db
+      .prepare('SELECT content FROM memory_fts WHERE group_folder = ?')
+      .all('group-a');
+
+    // Still only one row — second call did not duplicate
+    expect(rows).toHaveLength(1);
+  });
+
+  it('enforces group isolation: group-b query returns 0 rows from group-a content', () => {
+    if (!isSemanticsEnabled()) return;
+
+    const db = _getTestDb();
+    const vec = new Float32Array(EMBEDDING_DIM).fill(0.3);
+
+    storeEmbedding(db, 'group-a', 'knowledge', 'notes/shared.md', 'shared content', vec);
+
+    const rows = db
+      .prepare('SELECT content FROM memory_fts WHERE group_folder = ?')
+      .all('group-b');
+
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe('memory_fts sync in deleteEmbedding()', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  it('removes the corresponding memory_fts row when deleting an embedding', () => {
+    if (!isSemanticsEnabled()) {
+      console.log('sqlite-vec not available, skipping memory_fts delete tests');
+      return;
+    }
+
+    const db = _getTestDb();
+    const vec = new Float32Array(EMBEDDING_DIM).fill(0.2);
+
+    storeEmbedding(db, 'group-a', 'fact', 'knowledge/pref.md', 'some fact', vec);
+
+    const before = db
+      .prepare('SELECT content FROM memory_fts WHERE group_folder = ?')
+      .all('group-a');
+    expect(before).toHaveLength(1);
+
+    deleteEmbedding(db, 'group-a', 'fact', 'knowledge/pref.md');
+
+    const after = db
+      .prepare('SELECT content FROM memory_fts WHERE group_folder = ?')
+      .all('group-a');
+    expect(after).toHaveLength(0);
+  });
+
+  it('is a no-op when path does not exist in memory_fts', () => {
+    if (!isSemanticsEnabled()) return;
+
+    const db = _getTestDb();
+
+    expect(() =>
+      deleteEmbedding(db, 'group-a', 'fact', 'nonexistent/path.md'),
+    ).not.toThrow();
+  });
+});
+
 // --- checkOllamaReachability() ---
 
 describe('checkOllamaReachability()', () => {
