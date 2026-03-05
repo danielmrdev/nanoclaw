@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import { execSync } from 'child_process';
 import { createRequire } from 'module';
 
@@ -7,6 +8,7 @@ import { Bot, Api } from 'grammy';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { markdownToTelegramHtml } from '../markdown-to-telegram.js';
 import { logger } from '../logger.js';
+import { resolveGroupFolderPath } from '../group-folder.js';
 import {
   Channel,
   OnChatMetadata,
@@ -87,6 +89,64 @@ function splitHtmlIntelligently(html: string, maxLength: number): string[] {
   }
 
   return chunks.length > 0 ? chunks : [html];
+}
+
+function buildMemoryReport(groupPath: string): string {
+  const lines: string[] = ['## Memory State', ''];
+
+  // Knowledge categories
+  const knowledgeDir = path.join(groupPath, 'knowledge');
+  let knowledgeFiles: string[] = [];
+  try {
+    if (fs.existsSync(knowledgeDir)) {
+      knowledgeFiles = fs.readdirSync(knowledgeDir).filter((f) => f.endsWith('.md') && f !== '_index.md').sort();
+    }
+  } catch { /* ignore */ }
+  lines.push(`**Knowledge** (${knowledgeFiles.length} files):`);
+  if (knowledgeFiles.length > 0) {
+    for (const f of knowledgeFiles) lines.push(`- ${f.replace(/\.md$/, '')}`);
+  } else {
+    lines.push('- (none)');
+  }
+  lines.push('');
+
+  // Recent daily notes
+  const dailyDir = path.join(groupPath, 'daily');
+  const allDates: string[] = [];
+  try {
+    if (fs.existsSync(dailyDir)) {
+      for (const entry of fs.readdirSync(dailyDir)) {
+        if (!/^\d{4}-\d{2}$/.test(entry)) continue;
+        const monthDir = path.join(dailyDir, entry);
+        try {
+          if (!fs.statSync(monthDir).isDirectory()) continue;
+          for (const file of fs.readdirSync(monthDir)) {
+            if (file.endsWith('.md')) allDates.push(file.replace(/\.md$/, ''));
+          }
+        } catch { /* ignore */ }
+      }
+    }
+  } catch { /* ignore */ }
+  const recentDates = allDates.sort((a, b) => b.localeCompare(a)).slice(0, 7);
+  lines.push(`**Daily Notes** (last 7):`);
+  if (recentDates.length > 0) {
+    for (const d of recentDates) lines.push(`- ${d}`);
+  } else {
+    lines.push('- (none)');
+  }
+  lines.push('');
+
+  // Conversations
+  const conversationsDir = path.join(groupPath, 'conversations');
+  let convCount = 0;
+  try {
+    if (fs.existsSync(conversationsDir)) {
+      convCount = fs.readdirSync(conversationsDir).filter((f) => f.endsWith('.md')).length;
+    }
+  } catch { /* ignore */ }
+  lines.push(`**Conversations**: ${convCount} total`);
+
+  return lines.join('\n');
 }
 
 export class TelegramChannel implements Channel {
@@ -222,23 +282,20 @@ ${systemStatusBody}`;
       setTimeout(() => process.kill(process.pid, 'SIGTERM'), 500);
     });
 
-    // Route /memory through the agent pipeline (needs container filesystem access)
+    // Handle /memory directly without a container (0 tokens, reads filesystem)
     this.bot.command('memory', async (ctx) => {
       const chatJid = `tg:${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
       if (!group || !ctx.message) return;
-      const timestamp = new Date(ctx.message.date * 1000).toISOString();
-      const senderName = ctx.from?.first_name || ctx.from?.username || ctx.from?.id.toString() || 'Unknown';
-      this.opts.onChatMetadata(chatJid, timestamp, senderName);
-      this.opts.onMessage(chatJid, {
-        id: ctx.message.message_id.toString(),
-        chat_jid: chatJid,
-        sender: ctx.from?.id.toString() || '',
-        sender_name: senderName,
-        content: '/memory',
-        timestamp,
-        is_from_me: false,
-      });
+      try {
+        const groupPath = resolveGroupFolderPath(group.folder);
+        const report = buildMemoryReport(groupPath);
+        const html = markdownToTelegramHtml(report);
+        await ctx.reply(html, { parse_mode: 'HTML' });
+      } catch (err) {
+        logger.error({ err }, 'Failed to build memory report');
+        await ctx.reply('Error reading memory state.');
+      }
     });
 
     this.bot.on('message:text', async (ctx) => {
