@@ -40,6 +40,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
+  semanticContext?: string; // pre-assembled query-relevant memory from host-side hybrid search
 }
 
 interface ContainerOutput {
@@ -476,11 +477,16 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: (globalClaudeMd || memoryPreamble)
+      systemPrompt: (globalClaudeMd || memoryPreamble || containerInput.semanticContext)
         ? {
             type: 'preset' as const,
             preset: 'claude_code' as const,
-            append: memoryPreamble + (globalClaudeMd || ''),
+            append:
+              memoryPreamble +
+              (containerInput.semanticContext
+                ? `\n\n${containerInput.semanticContext}`
+                : '') +
+              (globalClaudeMd || ''),
           }
         : undefined,
       allowedTools: [
