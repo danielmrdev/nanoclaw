@@ -616,7 +616,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
 
 export function getLastRecapTimestamp(
   groupFolder: string,
-  cadence: 'daily' | 'weekly',
+  cadence: 'daily' | 'weekly' | 'monthly' | 'semester' | 'annual',
 ): string | null {
   const row = db
     .prepare(
@@ -628,7 +628,7 @@ export function getLastRecapTimestamp(
 
 export function setLastRecapTimestamp(
   groupFolder: string,
-  cadence: 'daily' | 'weekly',
+  cadence: 'daily' | 'weekly' | 'monthly' | 'semester' | 'annual',
   timestamp: string,
 ): void {
   db.prepare(

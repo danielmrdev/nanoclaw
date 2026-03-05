@@ -21,6 +21,18 @@ export interface WeeklyRecapOptions extends RecapOptions {
   weekIso: string; // 'YYYY-Wnn'
 }
 
+export interface MonthlyRecapOptions extends RecapOptions {
+  monthIso: string; // 'YYYY-MM'
+}
+
+export interface SemesterRecapOptions extends RecapOptions {
+  semIso: string; // 'YYYY-S1' | 'YYYY-S2'
+}
+
+export interface AnnualRecapOptions extends RecapOptions {
+  year: number;
+}
+
 export interface RecapResult {
   written: boolean;
   path: string;
@@ -235,6 +247,287 @@ function buildWeeklyContent(
     '(carry forward as needed)',
     '',
   ].join('\n');
+}
+
+// --- Monthly Recap ---
+
+export async function generateMonthlyRecap(
+  opts: MonthlyRecapOptions,
+): Promise<RecapResult> {
+  const { groupFolder, chatJid: _chatJid, monthIso, groupsDir = GROUPS_DIR } = opts;
+  const groupDir = path.join(groupsDir, groupFolder);
+
+  const weeklyNotes = collectWeeklyNotesForMonth(groupDir, monthIso);
+
+  const content =
+    weeklyNotes.length > 0
+      ? buildMonthlyContent(monthIso, weeklyNotes)
+      : `# Monthly Recap — ${monthIso}\n\nNo weekly notes available.\n`;
+
+  const targetDir = path.join(groupDir, 'daily', 'monthly');
+  const targetPath = path.join(targetDir, `${monthIso}.md`);
+  const tmpPath = `${targetPath}.tmp`;
+
+  fs.mkdirSync(targetDir, { recursive: true });
+  fs.writeFileSync(tmpPath, content, 'utf-8');
+  fs.renameSync(tmpPath, targetPath);
+
+  setLastRecapTimestamp(groupFolder, 'monthly', monthToFirstDay(monthIso).toISOString());
+
+  logger.info({ groupFolder, monthIso, path: targetPath }, 'Monthly recap written');
+  return { written: true, path: targetPath };
+}
+
+// --- Semester Recap ---
+
+export async function generateSemesterRecap(
+  opts: SemesterRecapOptions,
+): Promise<RecapResult> {
+  const { groupFolder, chatJid: _chatJid, semIso, groupsDir = GROUPS_DIR } = opts;
+  const groupDir = path.join(groupsDir, groupFolder);
+
+  const monthlyNotes = collectMonthlyNotesForSemester(groupDir, semIso);
+
+  const content =
+    monthlyNotes.length > 0
+      ? buildSemesterContent(semIso, monthlyNotes)
+      : `# Semester Recap — ${semIso}\n\nNo monthly notes available.\n`;
+
+  const targetDir = path.join(groupDir, 'daily', 'semester');
+  const targetPath = path.join(targetDir, `${semIso}.md`);
+  const tmpPath = `${targetPath}.tmp`;
+
+  fs.mkdirSync(targetDir, { recursive: true });
+  fs.writeFileSync(tmpPath, content, 'utf-8');
+  fs.renameSync(tmpPath, targetPath);
+
+  setLastRecapTimestamp(groupFolder, 'semester', semesterToFirstDay(semIso).toISOString());
+
+  logger.info({ groupFolder, semIso, path: targetPath }, 'Semester recap written');
+  return { written: true, path: targetPath };
+}
+
+// --- Annual Recap ---
+
+export async function generateAnnualRecap(
+  opts: AnnualRecapOptions,
+): Promise<RecapResult> {
+  const { groupFolder, chatJid: _chatJid, year, groupsDir = GROUPS_DIR } = opts;
+  const groupDir = path.join(groupsDir, groupFolder);
+
+  const semesterNotes = collectSemesterNotesForYear(groupDir, year);
+
+  const content =
+    semesterNotes.length > 0
+      ? buildAnnualContent(year, semesterNotes)
+      : `# Annual Recap — ${year}\n\nNo semester notes available.\n`;
+
+  const targetDir = path.join(groupDir, 'daily', 'annual');
+  const targetPath = path.join(targetDir, `${year}.md`);
+  const tmpPath = `${targetPath}.tmp`;
+
+  fs.mkdirSync(targetDir, { recursive: true });
+  fs.writeFileSync(tmpPath, content, 'utf-8');
+  fs.renameSync(tmpPath, targetPath);
+
+  setLastRecapTimestamp(
+    groupFolder,
+    'annual',
+    new Date(Date.UTC(year, 0, 1)).toISOString(),
+  );
+
+  logger.info({ groupFolder, year, path: targetPath }, 'Annual recap written');
+  return { written: true, path: targetPath };
+}
+
+// --- Content builders ---
+
+function buildMonthlyContent(
+  monthIso: string,
+  weeklyNotes: Array<{ weekIso: string; content: string }>,
+): string {
+  const notesSections = weeklyNotes
+    .map(({ weekIso, content }) => `## ${weekIso}\n\n${content.trim()}`)
+    .join('\n\n---\n\n');
+
+  return [
+    `# Monthly Recap — ${monthIso}`,
+    '',
+    '## Month Overview',
+    `${weeklyNotes.length} weeks with notes this month.`,
+    '',
+    '## Weekly Notes',
+    '',
+    notesSections,
+    '',
+    '## Recurring Themes',
+    '- (review weekly notes above)',
+    '',
+    '## Key Decisions',
+    '- (none recorded)',
+    '',
+    '## Durable Knowledge',
+    '- (none recorded)',
+    '',
+  ].join('\n');
+}
+
+function buildSemesterContent(
+  semIso: string,
+  monthlyNotes: Array<{ monthIso: string; content: string }>,
+): string {
+  const notesSections = monthlyNotes
+    .map(({ monthIso, content }) => `## ${monthIso}\n\n${content.trim()}`)
+    .join('\n\n---\n\n');
+
+  return [
+    `# Semester Recap — ${semIso}`,
+    '',
+    '## Semester Overview',
+    `${monthlyNotes.length} months with notes this semester.`,
+    '',
+    '## Monthly Notes',
+    '',
+    notesSections,
+    '',
+    '## Recurring Themes',
+    '- (review monthly notes above)',
+    '',
+    '## Key Decisions',
+    '- (none recorded)',
+    '',
+    '## Durable Knowledge',
+    '- (none recorded)',
+    '',
+  ].join('\n');
+}
+
+function buildAnnualContent(
+  year: number,
+  semesterNotes: Array<{ semIso: string; content: string }>,
+): string {
+  const notesSections = semesterNotes
+    .map(({ semIso, content }) => `## ${semIso}\n\n${content.trim()}`)
+    .join('\n\n---\n\n');
+
+  return [
+    `# Annual Recap — ${year}`,
+    '',
+    '## Year Overview',
+    `${semesterNotes.length} semesters with notes this year.`,
+    '',
+    '## Semester Notes',
+    '',
+    notesSections,
+    '',
+    '## Recurring Themes',
+    '- (review semester notes above)',
+    '',
+    '## Key Decisions',
+    '- (none recorded)',
+    '',
+    '## Durable Knowledge',
+    '- (none recorded)',
+    '',
+  ].join('\n');
+}
+
+// --- Collect helpers ---
+
+function collectWeeklyNotesForMonth(
+  groupDir: string,
+  monthIso: string,
+): Array<{ weekIso: string; content: string }> {
+  const weeklyDir = path.join(groupDir, 'daily', 'weekly');
+  if (!fs.existsSync(weeklyDir)) return [];
+
+  const [year, month] = monthIso.split('-').map(Number);
+  const monthStart = new Date(Date.UTC(year, month - 1, 1));
+  const monthEnd = new Date(Date.UTC(year, month, 1)); // exclusive: first day of next month
+
+  const files = fs.readdirSync(weeklyDir).filter((f) => /^\d{4}-W\d{2}\.md$/.test(f));
+  const notes: Array<{ weekIso: string; content: string }> = [];
+
+  for (const file of files.sort()) {
+    const weekIso = file.replace('.md', '');
+    const monday = isoWeekToMonday(weekIso);
+    if (monday >= monthStart && monday < monthEnd) {
+      const notePath = path.join(weeklyDir, file);
+      notes.push({ weekIso, content: fs.readFileSync(notePath, 'utf-8') });
+    }
+  }
+
+  return notes;
+}
+
+function collectMonthlyNotesForSemester(
+  groupDir: string,
+  semIso: string,
+): Array<{ monthIso: string; content: string }> {
+  const monthlyDir = path.join(groupDir, 'daily', 'monthly');
+  if (!fs.existsSync(monthlyDir)) return [];
+
+  const match = semIso.match(/^(\d{4})-S([12])$/);
+  if (!match) throw new Error(`Invalid semester string: ${semIso}`);
+  const year = match[1];
+  const sem = parseInt(match[2], 10);
+
+  const months =
+    sem === 1
+      ? ['01', '02', '03', '04', '05', '06']
+      : ['07', '08', '09', '10', '11', '12'];
+
+  const notes: Array<{ monthIso: string; content: string }> = [];
+  for (const m of months) {
+    const monthIso = `${year}-${m}`;
+    const notePath = path.join(monthlyDir, `${monthIso}.md`);
+    if (fs.existsSync(notePath)) {
+      notes.push({ monthIso, content: fs.readFileSync(notePath, 'utf-8') });
+    }
+  }
+
+  return notes;
+}
+
+function collectSemesterNotesForYear(
+  groupDir: string,
+  year: number,
+): Array<{ semIso: string; content: string }> {
+  const semesterDir = path.join(groupDir, 'daily', 'semester');
+  if (!fs.existsSync(semesterDir)) return [];
+
+  const notes: Array<{ semIso: string; content: string }> = [];
+  for (const sem of ['S1', 'S2']) {
+    const semIso = `${year}-${sem}`;
+    const notePath = path.join(semesterDir, `${semIso}.md`);
+    if (fs.existsSync(notePath)) {
+      notes.push({ semIso, content: fs.readFileSync(notePath, 'utf-8') });
+    }
+  }
+
+  return notes;
+}
+
+// --- Date helpers ---
+
+/**
+ * Convert a month string (e.g. '2026-03') to the first day of that month (UTC).
+ */
+export function monthToFirstDay(monthIso: string): Date {
+  const [year, month] = monthIso.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, 1));
+}
+
+/**
+ * Convert a semester string (e.g. '2026-S1' or '2026-S2') to its first day (UTC).
+ * S1 = Jan 1, S2 = Jul 1.
+ */
+export function semesterToFirstDay(semIso: string): Date {
+  const match = semIso.match(/^(\d{4})-S([12])$/);
+  if (!match) throw new Error(`Invalid semester string: ${semIso}`);
+  const year = parseInt(match[1], 10);
+  const sem = parseInt(match[2], 10);
+  return new Date(Date.UTC(year, sem === 1 ? 0 : 6, 1));
 }
 
 /**
