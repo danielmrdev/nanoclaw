@@ -8,20 +8,16 @@ import { EMBEDDING_DIM } from './config.js';
 import { _initTestDatabase, _getTestDb, isSemanticsEnabled } from './db.js';
 import { storeEmbedding } from './embedding-service.js';
 
-// Automock embedding-service to control embed() and isSemanticsEnabled() returns.
+// Automock embedding-service and db to control embed() and isSemanticsEnabled() returns.
 // Using automocking (no factory) to avoid Vitest hoisting issues per STATE.md pattern.
 vi.mock('./embedding-service.js');
 vi.mock('./db.js');
 
 import { embed } from './embedding-service.js';
-import { hybridSearch, buildSemanticContext } from './semantic-retrieval.js';
-
-// Re-import real implementations after mocking at module level
-// We need real DB functions for integration-style tests.
-// Strategy: unmock db.js for tests that need a real DB, mock isSemanticsEnabled for pure unit tests.
+import { hybridSearch, buildSemanticContext, buildFtsQuery } from './semantic-retrieval.js';
 
 // -----------------------------------------------------------------------
-// Helper: create a real in-memory DB and populate it with test embeddings
+// Helper: create a float vector with a repeatable seed pattern
 // -----------------------------------------------------------------------
 
 function makeVec(seed: number): Float32Array {
@@ -55,40 +51,29 @@ describe('hybridSearch() — semantics disabled', () => {
 
 // -----------------------------------------------------------------------
 // hybridSearch() — with real in-memory database
+// All tests in this suite use vi.importActual to get real DB functions
+// while keeping embedding-service mocked for embed().
 // -----------------------------------------------------------------------
 
 describe('hybridSearch() — with real DB', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // Use real isSemanticsEnabled() from an in-memory DB
-    vi.mocked(isSemanticsEnabled).mockImplementation(() => {
-      // Re-require the real db module to get current state
-      // We proxy through a freshly initialized test DB
-      const { isSemanticsEnabled: realFn } = vi.importActual('./db.js') as typeof import('./db.js');
-      return realFn();
-    });
-  });
-
   it('returns KNN results when embed() returns a vector', async () => {
-    // Initialize a fresh in-memory DB with semantics
-    const { _initTestDatabase: realInit, _getTestDb: realGetDb, isSemanticsEnabled: realIsSemEnabled } =
-      await vi.importActual('./db.js') as typeof import('./db.js');
-    realInit();
-    const db = realGetDb();
+    const dbMod = await vi.importActual<typeof import('./db.js')>('./db.js');
+    dbMod._initTestDatabase();
+    const db = dbMod._getTestDb();
 
-    if (!realIsSemEnabled()) {
+    if (!dbMod.isSemanticsEnabled()) {
       console.log('sqlite-vec not available, skipping KNN test');
       return;
     }
 
-    const { storeEmbedding: realStore } = await vi.importActual('./embedding-service.js') as typeof import('./embedding-service.js');
+    const embMod = await vi.importActual<typeof import('./embedding-service.js')>('./embedding-service.js');
 
     const vec = makeVec(1);
-    realStore(db, 'group-a', 'knowledge', 'notes/file.md', 'hello world content', vec);
+    embMod.storeEmbedding(db, 'group-a', 'knowledge', 'notes/file.md', 'hello world content', vec);
 
-    // Mock embed() to return the same vector (should find the stored embedding)
     vi.mocked(embed).mockResolvedValue(vec);
     vi.mocked(isSemanticsEnabled).mockReturnValue(true);
+    vi.mocked(getDb).mockReturnValue(db);
 
     const results = await hybridSearch('group-a', 'hello world', { db });
 
@@ -98,22 +83,20 @@ describe('hybridSearch() — with real DB', () => {
   });
 
   it('returns FTS5-only results when embed() returns null (Ollama unavailable)', async () => {
-    const { _initTestDatabase: realInit, _getTestDb: realGetDb, isSemanticsEnabled: realIsSemEnabled } =
-      await vi.importActual('./db.js') as typeof import('./db.js');
-    realInit();
-    const db = realGetDb();
+    const dbMod = await vi.importActual<typeof import('./db.js')>('./db.js');
+    dbMod._initTestDatabase();
+    const db = dbMod._getTestDb();
 
-    if (!realIsSemEnabled()) {
+    if (!dbMod.isSemanticsEnabled()) {
       console.log('sqlite-vec not available, skipping FTS5 fallback test');
       return;
     }
 
-    const { storeEmbedding: realStore } = await vi.importActual('./embedding-service.js') as typeof import('./embedding-service.js');
+    const embMod = await vi.importActual<typeof import('./embedding-service.js')>('./embedding-service.js');
 
     const vec = makeVec(2);
-    realStore(db, 'group-a', 'knowledge', 'notes/fts-file.md', 'unique keyword content here', vec);
+    embMod.storeEmbedding(db, 'group-a', 'knowledge', 'notes/fts-file.md', 'unique keyword content here', vec);
 
-    // Simulate Ollama down
     vi.mocked(embed).mockResolvedValue(null);
     vi.mocked(isSemanticsEnabled).mockReturnValue(true);
 
@@ -126,20 +109,19 @@ describe('hybridSearch() — with real DB', () => {
   });
 
   it('deduplicates by source_path — same path from KNN and FTS5 appears once with via=knn', async () => {
-    const { _initTestDatabase: realInit, _getTestDb: realGetDb, isSemanticsEnabled: realIsSemEnabled } =
-      await vi.importActual('./db.js') as typeof import('./db.js');
-    realInit();
-    const db = realGetDb();
+    const dbMod = await vi.importActual<typeof import('./db.js')>('./db.js');
+    dbMod._initTestDatabase();
+    const db = dbMod._getTestDb();
 
-    if (!realIsSemEnabled()) {
+    if (!dbMod.isSemanticsEnabled()) {
       console.log('sqlite-vec not available, skipping dedup test');
       return;
     }
 
-    const { storeEmbedding: realStore } = await vi.importActual('./embedding-service.js') as typeof import('./embedding-service.js');
+    const embMod = await vi.importActual<typeof import('./embedding-service.js')>('./embedding-service.js');
 
     const vec = makeVec(3);
-    realStore(db, 'group-a', 'knowledge', 'notes/dedup.md', 'dedup test content query', vec);
+    embMod.storeEmbedding(db, 'group-a', 'knowledge', 'notes/dedup.md', 'dedup test content query', vec);
 
     // embed() returns the vector → both KNN and FTS5 will find this file
     vi.mocked(embed).mockResolvedValue(vec);
@@ -157,20 +139,19 @@ describe('hybridSearch() — with real DB', () => {
   });
 
   it('returns 0 results from group-b when querying group-a embeddings (group isolation)', async () => {
-    const { _initTestDatabase: realInit, _getTestDb: realGetDb, isSemanticsEnabled: realIsSemEnabled } =
-      await vi.importActual('./db.js') as typeof import('./db.js');
-    realInit();
-    const db = realGetDb();
+    const dbMod = await vi.importActual<typeof import('./db.js')>('./db.js');
+    dbMod._initTestDatabase();
+    const db = dbMod._getTestDb();
 
-    if (!realIsSemEnabled()) {
+    if (!dbMod.isSemanticsEnabled()) {
       console.log('sqlite-vec not available, skipping isolation test');
       return;
     }
 
-    const { storeEmbedding: realStore } = await vi.importActual('./embedding-service.js') as typeof import('./embedding-service.js');
+    const embMod = await vi.importActual<typeof import('./embedding-service.js')>('./embedding-service.js');
 
     const vec = makeVec(4);
-    realStore(db, 'group-a', 'knowledge', 'notes/isolated.md', 'group a private content', vec);
+    embMod.storeEmbedding(db, 'group-a', 'knowledge', 'notes/isolated.md', 'group a private content', vec);
 
     vi.mocked(embed).mockResolvedValue(vec);
     vi.mocked(isSemanticsEnabled).mockReturnValue(true);
@@ -182,12 +163,11 @@ describe('hybridSearch() — with real DB', () => {
   });
 
   it('returns [] for a new group with no embeddings', async () => {
-    const { _initTestDatabase: realInit, _getTestDb: realGetDb, isSemanticsEnabled: realIsSemEnabled } =
-      await vi.importActual('./db.js') as typeof import('./db.js');
-    realInit();
-    const db = realGetDb();
+    const dbMod = await vi.importActual<typeof import('./db.js')>('./db.js');
+    dbMod._initTestDatabase();
+    const db = dbMod._getTestDb();
 
-    if (!realIsSemEnabled()) {
+    if (!dbMod.isSemanticsEnabled()) {
       console.log('sqlite-vec not available, skipping empty group test');
       return;
     }
@@ -202,16 +182,8 @@ describe('hybridSearch() — with real DB', () => {
 });
 
 // -----------------------------------------------------------------------
-// buildFtsQuery() — internal helper tested via hybridSearch edge cases
-// These tests exercise the exported function behavior indirectly.
-// The plan also requests direct tests of buildFtsQuery(), but since it's
-// internal (not exported), we test it via the exported testBuildFtsQuery
-// or we export it for testing purposes.
+// buildFtsQuery()
 // -----------------------------------------------------------------------
-
-// Re-import to check if buildFtsQuery is exported (it may be internal)
-// The plan says to test it — we'll export it from semantic-retrieval.ts
-import { buildFtsQuery } from './semantic-retrieval.js';
 
 describe('buildFtsQuery()', () => {
   it('returns null for empty string', () => {
@@ -313,15 +285,13 @@ describe('buildSemanticContext()', () => {
     const output = buildSemanticContext('group-a', results, { groupsDir: tmpDir });
 
     // Output should not include all 10 files because total would exceed 4000 chars
-    // Each file adds ~1000 chars + header, so roughly 4 files fit before truncation
-    // The total output length should be reasonable (not 10,000+ chars)
-    expect(output.length).toBeLessThan(8000); // generous upper bound
-    expect(output).not.toContain('file9.md'); // last file should be truncated
+    expect(output.length).toBeLessThan(8000);
+    expect(output).not.toContain('file9.md');
 
     fs.rmSync(tmpDir, { recursive: true });
   });
 
-  it('includes distance info for KNN results and omits it for FTS5', () => {
+  it('includes file content for KNN results', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-test-'));
     const groupDir = path.join(tmpDir, 'group-a');
     fs.mkdirSync(groupDir, { recursive: true });
@@ -333,9 +303,11 @@ describe('buildSemanticContext()', () => {
 
     const output = buildSemanticContext('group-a', results, { groupsDir: tmpDir });
 
-    // Should contain the file content
     expect(output).toContain('Test content');
 
     fs.rmSync(tmpDir, { recursive: true });
   });
 });
+
+// getDb is also mocked — need to import it for typing
+import { getDb } from './db.js';
