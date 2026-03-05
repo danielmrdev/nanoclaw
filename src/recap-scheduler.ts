@@ -7,6 +7,7 @@ import { logger } from './logger.js';
 const DAILY_RECAP_CRON = process.env.DAILY_RECAP_CRON || '45 23 * * *';
 const WEEKLY_RECAP_CRON = process.env.WEEKLY_RECAP_CRON || '0 0 * * 0';
 const MONTHLY_RECAP_CRON = process.env.MONTHLY_RECAP_CRON || '0 0 1 * *';
+const PRUNE_RECAP_CRON = process.env.PRUNE_RECAP_CRON || '30 0 1 * *';
 const SEMESTER_RECAP_CRON = process.env.SEMESTER_RECAP_CRON || '0 0 1 1,7 *';
 const ANNUAL_RECAP_CRON = process.env.ANNUAL_RECAP_CRON || '0 1 1 1 *';
 
@@ -29,6 +30,10 @@ function semesterRecapTaskId(groupFolder: string): string {
 
 function annualRecapTaskId(groupFolder: string): string {
   return `recap-annual-${groupFolder}`;
+}
+
+function pruneTaskId(groupFolder: string): string {
+  return `recap-prune-${groupFolder}`;
 }
 
 function nextCronRun(cronExpr: string): string | null {
@@ -111,6 +116,27 @@ export function ensureRecapTasks(): void {
       logger.info(
         { groupFolder: group.folder, taskId: monthlyId },
         'Registered monthly recap task',
+      );
+    }
+
+    // --- Knowledge base pruning ---
+    const pruneId = pruneTaskId(group.folder);
+    if (!existingIds.has(pruneId)) {
+      createTask({
+        id: pruneId,
+        group_folder: group.folder,
+        chat_jid: jid,
+        prompt: buildPrunePrompt(group.folder),
+        schedule_type: 'cron',
+        schedule_value: PRUNE_RECAP_CRON,
+        context_mode: 'isolated',
+        next_run: nextCronRun(PRUNE_RECAP_CRON),
+        status: 'active',
+        created_at: now,
+      });
+      logger.info(
+        { groupFolder: group.folder, taskId: pruneId },
+        'Registered knowledge pruning task',
       );
     }
 
@@ -291,6 +317,21 @@ Instructions:
    Call it: generateAnnualRecap({ groupFolder: "${groupFolder}", chatJid: context.chatJid, year: 2026 })
 3. Log the result (e.g. "Annual recap written: {result.path}").
 4. Handle errors gracefully — log and continue if it throws.
+
+Do NOT send any message to the chat. This task runs silently.`;
+}
+
+function buildPrunePrompt(groupFolder: string): string {
+  return `You are running as an isolated pruning agent for group "${groupFolder}".
+
+Your job: Prune the knowledge base by archiving stale or contradicted facts.
+
+Instructions:
+1. Import pruneKnowledgeBase from src/knowledge-pruner.ts.
+   Call it: pruneKnowledgeBase({ groupFolder: "${groupFolder}" })
+2. Log the result:
+   "Knowledge pruning complete: scanned {result.categoriesScanned} categories, archived {result.factsArchived} fact sections"
+3. Handle errors gracefully — log the error and continue. Do not propagate the error.
 
 Do NOT send any message to the chat. This task runs silently.`;
 }
