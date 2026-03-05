@@ -73,6 +73,12 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS recap_coverage (
+      group_folder TEXT NOT NULL,
+      cadence TEXT NOT NULL,
+      last_recap_timestamp TEXT NOT NULL,
+      PRIMARY KEY (group_folder, cadence)
+    );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -604,6 +610,30 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Recap coverage accessors ---
+
+export function getLastRecapTimestamp(
+  groupFolder: string,
+  cadence: 'daily' | 'weekly',
+): string | null {
+  const row = db
+    .prepare(
+      'SELECT last_recap_timestamp FROM recap_coverage WHERE group_folder = ? AND cadence = ?',
+    )
+    .get(groupFolder, cadence) as { last_recap_timestamp: string } | undefined;
+  return row?.last_recap_timestamp ?? null;
+}
+
+export function setLastRecapTimestamp(
+  groupFolder: string,
+  cadence: 'daily' | 'weekly',
+  timestamp: string,
+): void {
+  db.prepare(
+    'INSERT OR REPLACE INTO recap_coverage (group_folder, cadence, last_recap_timestamp) VALUES (?, ?, ?)',
+  ).run(groupFolder, cadence, timestamp);
 }
 
 // --- JSON migration ---
