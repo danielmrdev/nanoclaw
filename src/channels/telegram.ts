@@ -127,7 +127,8 @@ export class TelegramChannel implements Channel {
         `/version — Show NanoClaw version\n` +
         `/status — System status report\n` +
         `/restart — Restart NanoClaw\n` +
-        `/chatid — Get this chat's registration ID`,
+        `/chatid — Get this chat's registration ID\n` +
+        `/memory — Show memory state (knowledge, daily notes, conversations)`,
       );
     });
 
@@ -219,6 +220,25 @@ ${systemStatusBody}`;
       logger.info('Service restart initiated via /restart command');
       // launchctl (KeepAlive: true) will restart the process automatically
       setTimeout(() => process.kill(process.pid, 'SIGTERM'), 500);
+    });
+
+    // Route /memory through the agent pipeline (needs container filesystem access)
+    this.bot.command('memory', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group || !ctx.message) return;
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName = ctx.from?.first_name || ctx.from?.username || ctx.from?.id.toString() || 'Unknown';
+      this.opts.onChatMetadata(chatJid, timestamp, senderName);
+      this.opts.onMessage(chatJid, {
+        id: ctx.message.message_id.toString(),
+        chat_jid: chatJid,
+        sender: ctx.from?.id.toString() || '',
+        sender_name: senderName,
+        content: '/memory',
+        timestamp,
+        is_from_me: false,
+      });
     });
 
     this.bot.on('message:text', async (ctx) => {
