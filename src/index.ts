@@ -36,12 +36,14 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  isSemanticsEnabled,
   setRegisteredGroup,
   setRouterState,
   setSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import { checkOllamaReachability } from './embedding-service.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -485,6 +487,9 @@ async function main(): Promise<void> {
   cleanupOrphans();
   initDatabase();
   logger.info('Database initialized');
+  if (isSemanticsEnabled()) {
+    await checkOllamaReachability();
+  }
   loadState();
 
   // Graceful shutdown handlers
