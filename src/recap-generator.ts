@@ -1,8 +1,16 @@
 import fs from 'fs';
 import path from 'path';
 
+import Database from 'better-sqlite3';
+
 import { ASSISTANT_NAME, GROUPS_DIR } from './config.js';
-import { getMessagesForDateRange, setLastRecapTimestamp } from './db.js';
+import {
+  getDb,
+  getMessagesForDateRange,
+  isSemanticsEnabled,
+  setLastRecapTimestamp,
+} from './db.js';
+import { embed, storeEmbedding } from './embedding-service.js';
 import { logger } from './logger.js';
 import { NewMessage } from './types.js';
 
@@ -11,6 +19,8 @@ export interface RecapOptions {
   chatJid: string;
   /** Override for GROUPS_DIR — used in tests to point at a temp directory. */
   groupsDir?: string;
+  /** Override db handle — used in tests. Production code omits this. */
+  db?: Database.Database;
 }
 
 export interface DailyRecapOptions extends RecapOptions {
@@ -44,6 +54,7 @@ export async function generateDailyRecap(
   opts: DailyRecapOptions,
 ): Promise<RecapResult> {
   const { groupFolder, chatJid, date, groupsDir = GROUPS_DIR } = opts;
+  const resolvedDb: Database.Database = opts.db ?? getDb();
 
   // Parse date boundaries (inclusive of full day, UTC)
   const dayStart = new Date(`${date}T00:00:00.000Z`).toISOString();
@@ -79,6 +90,12 @@ export async function generateDailyRecap(
   promoteFacts(groupDir, content, date);
 
   logger.info({ groupFolder, date, path: targetPath }, 'Daily recap written');
+
+  if (isSemanticsEnabled()) {
+    const relativePath = `daily/${year}-${month}/${date}.md`;
+    void embedContent(resolvedDb, groupFolder, 'daily', relativePath, content);
+  }
+
   return { written: true, path: targetPath };
 }
 
@@ -159,6 +176,7 @@ export async function generateWeeklyRecap(
   opts: WeeklyRecapOptions,
 ): Promise<RecapResult> {
   const { groupFolder, chatJid: _chatJid, weekIso, groupsDir = GROUPS_DIR } = opts;
+  const resolvedDb: Database.Database = opts.db ?? getDb();
   const groupDir = path.join(groupsDir, groupFolder);
 
   // Collect daily notes for this week (Mon–Sun)
@@ -183,6 +201,12 @@ export async function generateWeeklyRecap(
   setLastRecapTimestamp(groupFolder, 'weekly', weekStart);
 
   logger.info({ groupFolder, weekIso, path: targetPath }, 'Weekly recap written');
+
+  if (isSemanticsEnabled()) {
+    const relativePath = `daily/weekly/${weekIso}.md`;
+    void embedContent(resolvedDb, groupFolder, 'weekly', relativePath, content);
+  }
+
   return { written: true, path: targetPath };
 }
 
@@ -255,6 +279,7 @@ export async function generateMonthlyRecap(
   opts: MonthlyRecapOptions,
 ): Promise<RecapResult> {
   const { groupFolder, chatJid: _chatJid, monthIso, groupsDir = GROUPS_DIR } = opts;
+  const resolvedDb: Database.Database = opts.db ?? getDb();
   const groupDir = path.join(groupsDir, groupFolder);
 
   const weeklyNotes = collectWeeklyNotesForMonth(groupDir, monthIso);
@@ -275,6 +300,12 @@ export async function generateMonthlyRecap(
   setLastRecapTimestamp(groupFolder, 'monthly', monthToFirstDay(monthIso).toISOString());
 
   logger.info({ groupFolder, monthIso, path: targetPath }, 'Monthly recap written');
+
+  if (isSemanticsEnabled()) {
+    const relativePath = `daily/monthly/${monthIso}.md`;
+    void embedContent(resolvedDb, groupFolder, 'monthly', relativePath, content);
+  }
+
   return { written: true, path: targetPath };
 }
 
@@ -284,6 +315,7 @@ export async function generateSemesterRecap(
   opts: SemesterRecapOptions,
 ): Promise<RecapResult> {
   const { groupFolder, chatJid: _chatJid, semIso, groupsDir = GROUPS_DIR } = opts;
+  const resolvedDb: Database.Database = opts.db ?? getDb();
   const groupDir = path.join(groupsDir, groupFolder);
 
   const monthlyNotes = collectMonthlyNotesForSemester(groupDir, semIso);
@@ -304,6 +336,12 @@ export async function generateSemesterRecap(
   setLastRecapTimestamp(groupFolder, 'semester', semesterToFirstDay(semIso).toISOString());
 
   logger.info({ groupFolder, semIso, path: targetPath }, 'Semester recap written');
+
+  if (isSemanticsEnabled()) {
+    const relativePath = `daily/semester/${semIso}.md`;
+    void embedContent(resolvedDb, groupFolder, 'semester', relativePath, content);
+  }
+
   return { written: true, path: targetPath };
 }
 
@@ -313,6 +351,7 @@ export async function generateAnnualRecap(
   opts: AnnualRecapOptions,
 ): Promise<RecapResult> {
   const { groupFolder, chatJid: _chatJid, year, groupsDir = GROUPS_DIR } = opts;
+  const resolvedDb: Database.Database = opts.db ?? getDb();
   const groupDir = path.join(groupsDir, groupFolder);
 
   const semesterNotes = collectSemesterNotesForYear(groupDir, year);
@@ -337,7 +376,32 @@ export async function generateAnnualRecap(
   );
 
   logger.info({ groupFolder, year, path: targetPath }, 'Annual recap written');
+
+  if (isSemanticsEnabled()) {
+    const relativePath = `daily/annual/${year}.md`;
+    void embedContent(resolvedDb, groupFolder, 'annual', relativePath, content);
+  }
+
   return { written: true, path: targetPath };
+}
+
+// --- Embedding hook ---
+
+async function embedContent(
+  db: Database.Database,
+  groupFolder: string,
+  sourceType: string,
+  sourcePath: string,
+  content: string,
+): Promise<void> {
+  try {
+    const vector = await embed(content);
+    if (vector) {
+      storeEmbedding(db, groupFolder, sourceType, sourcePath, content, vector);
+    }
+  } catch (err) {
+    logger.warn({ err, groupFolder, sourceType, sourcePath }, 'embedContent failed');
+  }
 }
 
 // --- Content builders ---

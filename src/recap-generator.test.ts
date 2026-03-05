@@ -4,9 +4,18 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock the db module before importing recap-generator
+const mockDb = {};
 vi.mock('./db.js', () => ({
   getMessagesForDateRange: vi.fn(),
   setLastRecapTimestamp: vi.fn(),
+  isSemanticsEnabled: vi.fn(() => false),
+  getDb: vi.fn(() => mockDb),
+}));
+
+// Mock embedding-service before importing recap-generator
+vi.mock('./embedding-service.js', () => ({
+  embed: vi.fn(),
+  storeEmbedding: vi.fn(),
 }));
 
 // Mock the config module
@@ -34,7 +43,8 @@ import {
   monthToFirstDay,
   semesterToFirstDay,
 } from './recap-generator.js';
-import { getMessagesForDateRange, setLastRecapTimestamp } from './db.js';
+import { getMessagesForDateRange, setLastRecapTimestamp, isSemanticsEnabled } from './db.js';
+import { embed, storeEmbedding } from './embedding-service.js';
 import { GROUPS_DIR } from './config.js';
 
 // Helper to set GROUPS_DIR dynamically in tests
@@ -597,5 +607,185 @@ describe('generateAnnualRecap', () => {
       'annual',
       expect.any(String),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Embedding hooks
+// ---------------------------------------------------------------------------
+
+describe('embedding hooks — isSemanticsEnabled=false', () => {
+  it('generateDailyRecap returns written:true when semantics disabled', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(false);
+    vi.mocked(getMessagesForDateRange).mockReturnValue([]);
+
+    const result = await generateDailyRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      date: '2026-03-05',
+      groupsDir: tempDir,
+    });
+
+    expect(result.written).toBe(true);
+    expect(storeEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('generateWeeklyRecap returns written:true when semantics disabled', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(false);
+
+    const result = await generateWeeklyRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      weekIso: '2026-W10',
+      groupsDir: tempDir,
+    });
+
+    expect(result.written).toBe(true);
+    expect(storeEmbedding).not.toHaveBeenCalled();
+  });
+});
+
+describe('embedding hooks — isSemanticsEnabled=true, embed returns vector', () => {
+  it('generateDailyRecap calls storeEmbedding with correct sourceType and relative path', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(true);
+    vi.mocked(getMessagesForDateRange).mockReturnValue([]);
+    const fakeVec = new Float32Array(768).fill(0.1);
+    vi.mocked(embed).mockResolvedValue(fakeVec);
+
+    await generateDailyRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      date: '2026-03-05',
+      groupsDir: tempDir,
+    });
+
+    // Fire-and-forget: wait for microtasks to flush
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(embed).toHaveBeenCalled();
+    expect(storeEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      'test-group',
+      'daily',
+      'daily/2026-03/2026-03-05.md',
+      expect.any(String),
+      fakeVec,
+    );
+  });
+
+  it('generateWeeklyRecap calls storeEmbedding with weekly sourceType', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(true);
+    const fakeVec = new Float32Array(768).fill(0.2);
+    vi.mocked(embed).mockResolvedValue(fakeVec);
+
+    await generateWeeklyRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      weekIso: '2026-W10',
+      groupsDir: tempDir,
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(storeEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      'test-group',
+      'weekly',
+      'daily/weekly/2026-W10.md',
+      expect.any(String),
+      fakeVec,
+    );
+  });
+
+  it('generateMonthlyRecap calls storeEmbedding with monthly sourceType', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(true);
+    const fakeVec = new Float32Array(768).fill(0.3);
+    vi.mocked(embed).mockResolvedValue(fakeVec);
+
+    await generateMonthlyRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      monthIso: '2026-03',
+      groupsDir: tempDir,
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(storeEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      'test-group',
+      'monthly',
+      'daily/monthly/2026-03.md',
+      expect.any(String),
+      fakeVec,
+    );
+  });
+
+  it('generateSemesterRecap calls storeEmbedding with semester sourceType', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(true);
+    const fakeVec = new Float32Array(768).fill(0.4);
+    vi.mocked(embed).mockResolvedValue(fakeVec);
+
+    await generateSemesterRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      semIso: '2026-S1',
+      groupsDir: tempDir,
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(storeEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      'test-group',
+      'semester',
+      'daily/semester/2026-S1.md',
+      expect.any(String),
+      fakeVec,
+    );
+  });
+
+  it('generateAnnualRecap calls storeEmbedding with annual sourceType', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(true);
+    const fakeVec = new Float32Array(768).fill(0.5);
+    vi.mocked(embed).mockResolvedValue(fakeVec);
+
+    await generateAnnualRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      year: 2026,
+      groupsDir: tempDir,
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(storeEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      'test-group',
+      'annual',
+      'daily/annual/2026.md',
+      expect.any(String),
+      fakeVec,
+    );
+  });
+});
+
+describe('embedding hooks — isSemanticsEnabled=true, embed returns null (Ollama down)', () => {
+  it('generateDailyRecap still returns written:true when embed returns null', async () => {
+    vi.mocked(isSemanticsEnabled).mockReturnValue(true);
+    vi.mocked(getMessagesForDateRange).mockReturnValue([]);
+    vi.mocked(embed).mockResolvedValue(null);
+
+    const result = await generateDailyRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      date: '2026-03-05',
+      groupsDir: tempDir,
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(result.written).toBe(true);
+    expect(storeEmbedding).not.toHaveBeenCalled();
   });
 });

@@ -194,6 +194,14 @@ export function _getTestDb(): Database.Database {
   return db;
 }
 
+/**
+ * Return the production database handle.
+ * Used by modules that need db access without being passed db explicitly.
+ */
+export function getDb(): Database.Database {
+  return db;
+}
+
 export function isSemanticsEnabled(): boolean {
   return semanticsEnabled;
 }
