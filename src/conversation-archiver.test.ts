@@ -23,7 +23,7 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-import { archiveOldConversations } from './conversation-archiver.js';
+import { archiveOldConversations, deleteOldArchives } from './conversation-archiver.js';
 import { getLastRecapTimestamp } from './db.js';
 
 let tempDir: string;
@@ -296,5 +296,152 @@ describe('archiveOldConversations', () => {
 
     expect(result.archived).toHaveLength(0);
     expect(result.skipped).toContain('2025-10-01.md');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deleteOldArchives tests
+// ---------------------------------------------------------------------------
+
+// Helper: create a file in the archive directory with a specific mtime
+function createArchiveFile(
+  groupFolder: string,
+  archiveMonth: string,
+  filename: string,
+  mtimeDaysAgo: number,
+): string {
+  const archiveDir = path.join(
+    tempDir,
+    groupFolder,
+    'conversations',
+    'archive',
+    archiveMonth,
+  );
+  fs.mkdirSync(archiveDir, { recursive: true });
+  const filePath = path.join(archiveDir, filename);
+  fs.writeFileSync(filePath, `# Archived conversation\n\nTest content.`, 'utf-8');
+
+  const mtimeMs = Date.now() - mtimeDaysAgo * 24 * 60 * 60 * 1000;
+  const mtimeDate = new Date(mtimeMs);
+  fs.utimesSync(filePath, mtimeDate, mtimeDate);
+
+  return filePath;
+}
+
+describe('deleteOldArchives', () => {
+  it('returns empty result immediately when no monthly recap coverage exists', () => {
+    vi.mocked(getLastRecapTimestamp).mockReturnValue(null);
+
+    // Create an old archive file
+    createArchiveFile('test-group', '2025-01', '2025-01-15.md', 100);
+
+    const result = deleteOldArchives({
+      groupFolder: 'test-group',
+      groupsDir: tempDir,
+    });
+
+    expect(result).toEqual({ deleted: [], skipped: [] });
+    expect(getLastRecapTimestamp).toHaveBeenCalledWith('test-group', 'monthly');
+  });
+
+  it('deletes archive files older than 90 days when monthly recap coverage exists', () => {
+    vi.mocked(getLastRecapTimestamp).mockReturnValue(
+      new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    );
+
+    const filePath = createArchiveFile('test-group', '2025-01', '2025-01-15.md', 100);
+
+    const result = deleteOldArchives({
+      groupFolder: 'test-group',
+      groupsDir: tempDir,
+    });
+
+    expect(result.deleted).toContain('2025-01-15.md');
+    expect(result.skipped).not.toContain('2025-01-15.md');
+    expect(fs.existsSync(filePath)).toBe(false);
+  });
+
+  it('skips archive files younger than 90 days', () => {
+    vi.mocked(getLastRecapTimestamp).mockReturnValue(
+      new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    );
+
+    createArchiveFile('test-group', '2025-10', '2025-10-15.md', 30);
+
+    const result = deleteOldArchives({
+      groupFolder: 'test-group',
+      groupsDir: tempDir,
+    });
+
+    expect(result.deleted).toHaveLength(0);
+    expect(result.skipped).toContain('2025-10-15.md');
+  });
+
+  it('respects groupsDir override for test isolation', () => {
+    vi.mocked(getLastRecapTimestamp).mockReturnValue(
+      new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    );
+
+    const filePath = createArchiveFile('test-group', '2025-01', '2025-01-10.md', 95);
+
+    const result = deleteOldArchives({
+      groupFolder: 'test-group',
+      groupsDir: tempDir,
+    });
+
+    expect(result.deleted).toContain('2025-01-10.md');
+    expect(fs.existsSync(filePath)).toBe(false);
+  });
+
+  it('reads .md files from all YYYY-MM subdirectories recursively', () => {
+    vi.mocked(getLastRecapTimestamp).mockReturnValue(
+      new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    );
+
+    // Two old files in different months
+    const file1 = createArchiveFile('test-group', '2025-01', '2025-01-01.md', 100);
+    const file2 = createArchiveFile('test-group', '2025-02', '2025-02-01.md', 100);
+
+    const result = deleteOldArchives({
+      groupFolder: 'test-group',
+      groupsDir: tempDir,
+    });
+
+    expect(result.deleted).toContain('2025-01-01.md');
+    expect(result.deleted).toContain('2025-02-01.md');
+    expect(fs.existsSync(file1)).toBe(false);
+    expect(fs.existsSync(file2)).toBe(false);
+  });
+
+  it('respects CONVERSATION_DELETE_AFTER_DAYS env var override', () => {
+    vi.stubEnv('CONVERSATION_DELETE_AFTER_DAYS', '60');
+    vi.mocked(getLastRecapTimestamp).mockReturnValue(
+      new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    );
+
+    // File is 65 days old — older than 60 but not 90
+    const filePath = createArchiveFile('test-group', '2025-10', '2025-10-01.md', 65);
+
+    const result = deleteOldArchives({
+      groupFolder: 'test-group',
+      groupsDir: tempDir,
+    });
+
+    expect(result.deleted).toContain('2025-10-01.md');
+    expect(fs.existsSync(filePath)).toBe(false);
+  });
+
+  it('returns empty result when archive directory does not exist', () => {
+    vi.mocked(getLastRecapTimestamp).mockReturnValue(
+      new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    );
+
+    // No archive directory created
+    const result = deleteOldArchives({
+      groupFolder: 'nonexistent-group',
+      groupsDir: tempDir,
+    });
+
+    expect(result).toEqual({ deleted: [], skipped: [] });
   });
 });
