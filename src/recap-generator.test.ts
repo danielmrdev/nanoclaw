@@ -27,7 +27,12 @@ vi.mock('./logger.js', () => ({
 import {
   generateDailyRecap,
   generateWeeklyRecap,
+  generateMonthlyRecap,
+  generateSemesterRecap,
+  generateAnnualRecap,
   isoWeekToMonday,
+  monthToFirstDay,
+  semesterToFirstDay,
 } from './recap-generator.js';
 import { getMessagesForDateRange, setLastRecapTimestamp } from './db.js';
 import { GROUPS_DIR } from './config.js';
@@ -249,6 +254,347 @@ describe('generateWeeklyRecap', () => {
     expect(setLastRecapTimestamp).toHaveBeenCalledWith(
       'test-group',
       'weekly',
+      expect.any(String),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// monthToFirstDay
+// ---------------------------------------------------------------------------
+
+describe('monthToFirstDay', () => {
+  it('returns 2026-03-01T00:00:00.000Z for 2026-03', () => {
+    const d = monthToFirstDay('2026-03');
+    expect(d.toISOString()).toBe('2026-03-01T00:00:00.000Z');
+  });
+
+  it('returns 2026-01-01T00:00:00.000Z for 2026-01', () => {
+    const d = monthToFirstDay('2026-01');
+    expect(d.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('returns 2026-12-01T00:00:00.000Z for 2026-12', () => {
+    const d = monthToFirstDay('2026-12');
+    expect(d.toISOString()).toBe('2026-12-01T00:00:00.000Z');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// semesterToFirstDay
+// ---------------------------------------------------------------------------
+
+describe('semesterToFirstDay', () => {
+  it('returns 2026-01-01T00:00:00.000Z for 2026-S1', () => {
+    const d = semesterToFirstDay('2026-S1');
+    expect(d.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('returns 2026-07-01T00:00:00.000Z for 2026-S2', () => {
+    const d = semesterToFirstDay('2026-S2');
+    expect(d.toISOString()).toBe('2026-07-01T00:00:00.000Z');
+  });
+
+  it('throws on invalid semester string', () => {
+    expect(() => semesterToFirstDay('2026-S3')).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateMonthlyRecap
+// ---------------------------------------------------------------------------
+
+describe('generateMonthlyRecap', () => {
+  it('writes stub file when no weekly notes exist', async () => {
+    const result = await generateMonthlyRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      monthIso: '2026-03',
+      groupsDir: tempDir,
+    });
+
+    expect(result.written).toBe(true);
+    const content = fs.readFileSync(result.path, 'utf-8');
+    expect(content).toContain('No weekly notes available');
+    expect(content).toContain('Monthly Recap — 2026-03');
+  });
+
+  it('writes monthly file with 3 weekly notes', async () => {
+    const groupFolder = 'test-group';
+    const weeklyDir = path.join(tempDir, groupFolder, 'daily', 'weekly');
+    fs.mkdirSync(weeklyDir, { recursive: true });
+
+    // W10 Monday=2026-03-02, W11 Monday=2026-03-09, W12 Monday=2026-03-16
+    fs.writeFileSync(
+      path.join(weeklyDir, '2026-W10.md'),
+      '# Weekly Recap — 2026-W10\n\nWeek 10 content.\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(weeklyDir, '2026-W11.md'),
+      '# Weekly Recap — 2026-W11\n\nWeek 11 content.\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(weeklyDir, '2026-W12.md'),
+      '# Weekly Recap — 2026-W12\n\nWeek 12 content.\n',
+      'utf-8',
+    );
+
+    const result = await generateMonthlyRecap({
+      groupFolder,
+      chatJid: 'test@g.us',
+      monthIso: '2026-03',
+      groupsDir: tempDir,
+    });
+
+    const content = fs.readFileSync(result.path, 'utf-8');
+    expect(content).toContain('Monthly Recap');
+    expect(content).toContain('Week 10 content');
+    expect(content).toContain('Week 11 content');
+    expect(content).toContain('Week 12 content');
+  });
+
+  it('writes file to correct path: daily/monthly/YYYY-MM.md', async () => {
+    const result = await generateMonthlyRecap({
+      groupFolder: 'my-group',
+      chatJid: 'test@g.us',
+      monthIso: '2026-03',
+      groupsDir: tempDir,
+    });
+
+    expect(result.path).toContain(path.join('daily', 'monthly', '2026-03.md'));
+    expect(fs.existsSync(result.path)).toBe(true);
+  });
+
+  it('does NOT leave a .tmp file behind (atomic write)', async () => {
+    const result = await generateMonthlyRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      monthIso: '2026-03',
+      groupsDir: tempDir,
+    });
+
+    expect(fs.existsSync(`${result.path}.tmp`)).toBe(false);
+  });
+
+  it('calls setLastRecapTimestamp with monthly cadence', async () => {
+    await generateMonthlyRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      monthIso: '2026-03',
+      groupsDir: tempDir,
+    });
+
+    expect(setLastRecapTimestamp).toHaveBeenCalledWith(
+      'test-group',
+      'monthly',
+      expect.any(String),
+    );
+  });
+
+  it('only includes weekly notes whose Monday falls within the month', async () => {
+    const groupFolder = 'test-group';
+    const weeklyDir = path.join(tempDir, groupFolder, 'daily', 'weekly');
+    fs.mkdirSync(weeklyDir, { recursive: true });
+
+    // W09 Monday=2026-02-23 (February — should be excluded from March)
+    fs.writeFileSync(
+      path.join(weeklyDir, '2026-W09.md'),
+      '# Weekly Recap — 2026-W09\n\nFeb week content.\n',
+      'utf-8',
+    );
+    // W10 Monday=2026-03-02 (March — should be included)
+    fs.writeFileSync(
+      path.join(weeklyDir, '2026-W10.md'),
+      '# Weekly Recap — 2026-W10\n\nMar week content.\n',
+      'utf-8',
+    );
+
+    const result = await generateMonthlyRecap({
+      groupFolder,
+      chatJid: 'test@g.us',
+      monthIso: '2026-03',
+      groupsDir: tempDir,
+    });
+
+    const content = fs.readFileSync(result.path, 'utf-8');
+    expect(content).toContain('Mar week content');
+    expect(content).not.toContain('Feb week content');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateSemesterRecap
+// ---------------------------------------------------------------------------
+
+describe('generateSemesterRecap', () => {
+  it('writes stub file when no monthly notes exist', async () => {
+    const result = await generateSemesterRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      semIso: '2026-S1',
+      groupsDir: tempDir,
+    });
+
+    expect(result.written).toBe(true);
+    const content = fs.readFileSync(result.path, 'utf-8');
+    expect(content).toContain('No monthly notes available');
+    expect(content).toContain('Semester Recap — 2026-S1');
+  });
+
+  it('writes semester file with 2 monthly notes', async () => {
+    const groupFolder = 'test-group';
+    const monthlyDir = path.join(tempDir, groupFolder, 'daily', 'monthly');
+    fs.mkdirSync(monthlyDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(monthlyDir, '2026-01.md'),
+      '# Monthly Recap — 2026-01\n\nJanuary content.\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(monthlyDir, '2026-02.md'),
+      '# Monthly Recap — 2026-02\n\nFebruary content.\n',
+      'utf-8',
+    );
+
+    const result = await generateSemesterRecap({
+      groupFolder,
+      chatJid: 'test@g.us',
+      semIso: '2026-S1',
+      groupsDir: tempDir,
+    });
+
+    const content = fs.readFileSync(result.path, 'utf-8');
+    expect(content).toContain('Semester Recap');
+    expect(content).toContain('January content');
+    expect(content).toContain('February content');
+  });
+
+  it('writes file to correct path: daily/semester/YYYY-Sn.md', async () => {
+    const result = await generateSemesterRecap({
+      groupFolder: 'my-group',
+      chatJid: 'test@g.us',
+      semIso: '2026-S1',
+      groupsDir: tempDir,
+    });
+
+    expect(result.path).toContain(
+      path.join('daily', 'semester', '2026-S1.md'),
+    );
+    expect(fs.existsSync(result.path)).toBe(true);
+  });
+
+  it('does NOT leave a .tmp file behind (atomic write)', async () => {
+    const result = await generateSemesterRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      semIso: '2026-S1',
+      groupsDir: tempDir,
+    });
+
+    expect(fs.existsSync(`${result.path}.tmp`)).toBe(false);
+  });
+
+  it('calls setLastRecapTimestamp with semester cadence', async () => {
+    await generateSemesterRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      semIso: '2026-S1',
+      groupsDir: tempDir,
+    });
+
+    expect(setLastRecapTimestamp).toHaveBeenCalledWith(
+      'test-group',
+      'semester',
+      expect.any(String),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateAnnualRecap
+// ---------------------------------------------------------------------------
+
+describe('generateAnnualRecap', () => {
+  it('writes stub file when no semester notes exist', async () => {
+    const result = await generateAnnualRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      year: 2026,
+      groupsDir: tempDir,
+    });
+
+    expect(result.written).toBe(true);
+    const content = fs.readFileSync(result.path, 'utf-8');
+    expect(content).toContain('No semester notes available');
+    expect(content).toContain('Annual Recap — 2026');
+  });
+
+  it('writes annual file with both semester notes', async () => {
+    const groupFolder = 'test-group';
+    const semesterDir = path.join(tempDir, groupFolder, 'daily', 'semester');
+    fs.mkdirSync(semesterDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(semesterDir, '2026-S1.md'),
+      '# Semester Recap — 2026-S1\n\nFirst half content.\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(semesterDir, '2026-S2.md'),
+      '# Semester Recap — 2026-S2\n\nSecond half content.\n',
+      'utf-8',
+    );
+
+    const result = await generateAnnualRecap({
+      groupFolder,
+      chatJid: 'test@g.us',
+      year: 2026,
+      groupsDir: tempDir,
+    });
+
+    const content = fs.readFileSync(result.path, 'utf-8');
+    expect(content).toContain('Annual Recap');
+    expect(content).toContain('First half content');
+    expect(content).toContain('Second half content');
+  });
+
+  it('writes file to correct path: daily/annual/YYYY.md', async () => {
+    const result = await generateAnnualRecap({
+      groupFolder: 'my-group',
+      chatJid: 'test@g.us',
+      year: 2026,
+      groupsDir: tempDir,
+    });
+
+    expect(result.path).toContain(path.join('daily', 'annual', '2026.md'));
+    expect(fs.existsSync(result.path)).toBe(true);
+  });
+
+  it('does NOT leave a .tmp file behind (atomic write)', async () => {
+    const result = await generateAnnualRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      year: 2026,
+      groupsDir: tempDir,
+    });
+
+    expect(fs.existsSync(`${result.path}.tmp`)).toBe(false);
+  });
+
+  it('calls setLastRecapTimestamp with annual cadence', async () => {
+    await generateAnnualRecap({
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      year: 2026,
+      groupsDir: tempDir,
+    });
+
+    expect(setLastRecapTimestamp).toHaveBeenCalledWith(
+      'test-group',
+      'annual',
       expect.any(String),
     );
   });
