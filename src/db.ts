@@ -636,6 +636,30 @@ export function setLastRecapTimestamp(
   ).run(groupFolder, cadence, timestamp);
 }
 
+/**
+ * Get all user messages for a group within a time range.
+ * Excludes bot messages. Used by recap generation.
+ */
+export function getMessagesForDateRange(
+  chatJid: string,
+  fromTimestamp: string,
+  toTimestamp: string,
+  botPrefix: string,
+): NewMessage[] {
+  const sql = `
+    SELECT id, chat_jid, sender, sender_name, content, timestamp
+    FROM messages
+    WHERE chat_jid = ?
+      AND timestamp > ? AND timestamp <= ?
+      AND is_bot_message = 0 AND content NOT LIKE ?
+      AND content != '' AND content IS NOT NULL
+    ORDER BY timestamp
+  `;
+  return db
+    .prepare(sql)
+    .all(chatJid, fromTimestamp, toTimestamp, `${botPrefix}:%`) as NewMessage[];
+}
+
 // --- JSON migration ---
 
 function migrateJsonState(): void {
