@@ -41,6 +41,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
+  semanticContext?: string; // pre-assembled query-relevant memory from host-side hybrid search
 }
 
 export interface ContainerOutput {

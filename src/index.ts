@@ -45,6 +45,7 @@ import {
 } from './db.js';
 import { checkOllamaReachability } from './embedding-service.js';
 import { GroupQueue } from './group-queue.js';
+import { buildSemanticContext, hybridSearch } from './semantic-retrieval.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { ensureRecapTasks } from './recap-scheduler.js';
@@ -256,6 +257,7 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  isScheduledTask?: boolean,
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
@@ -296,6 +298,24 @@ async function runAgent(
       }
     : undefined;
 
+  // Host-side semantic retrieval: embed the incoming message and find relevant memories.
+  // Skip for scheduled tasks — their prompts are system instructions, not user queries.
+  const semanticContext =
+    !isScheduledTask && isSemanticsEnabled()
+      ? await (async () => {
+          try {
+            const results = await hybridSearch(group.folder, prompt);
+            return buildSemanticContext(group.folder, results);
+          } catch (err) {
+            logger.warn(
+              { err, group: group.folder },
+              'Semantic retrieval failed, continuing without',
+            );
+            return '';
+          }
+        })()
+      : '';
+
   try {
     const output = await runContainerAgent(
       group,
@@ -306,6 +326,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        semanticContext: semanticContext || undefined,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
