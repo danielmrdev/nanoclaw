@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+import { EMBEDDING_DIM } from './config.js';
 import { _initTestDatabase, _getTestDb, isSemanticsEnabled } from './db.js';
 import {
   embed,
@@ -9,42 +10,32 @@ import {
   checkOllamaReachability,
   _resetClient,
 } from './embedding-service.js';
-import { EMBEDDING_DIM } from './config.js';
 
-// Mock the ollama package so tests never hit the network
-vi.mock('ollama', () => {
-  const mockEmbed = vi.fn();
-  const MockOllama = vi.fn().mockImplementation(() => ({
-    embed: mockEmbed,
-  }));
-  return { Ollama: MockOllama, __mockEmbed: mockEmbed };
-});
+// Use Vitest automocking so the Ollama constructor and its methods are replaced
+// with vi.fn() stubs. This avoids hoisting issues caused by factory-based mocks
+// when the test file also imports modules that transitively import 'ollama'.
+vi.mock('ollama');
 
-// Helper to get the mock embed function from the mocked module
-async function getMockEmbed(): Promise<ReturnType<typeof vi.fn>> {
-  const mod = await import('ollama');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (mod as any).__mockEmbed as ReturnType<typeof vi.fn>;
-}
+import { Ollama } from 'ollama';
 
-// Build a fake 768-float response
+// Build a fake EMBEDDING_DIM-float Ollama embed response
 function fakeEmbeddingResponse(count = 1): { embeddings: number[][] } {
   const vec = Array.from({ length: EMBEDDING_DIM }, (_, i) => i * 0.001);
-  return { embeddings: Array.from({ length: count }, () => vec) };
+  return { embeddings: Array.from({ length: count }, () => [...vec]) };
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   _resetClient();
-  const mockEmbed = await getMockEmbed();
-  mockEmbed.mockReset();
+  vi.clearAllMocks();
 });
 
 // --- embed() ---
 
 describe('embed()', () => {
   it('returns Float32Array of length EMBEDDING_DIM on success', async () => {
-    const mockEmbed = await getMockEmbed();
-    mockEmbed.mockResolvedValue(fakeEmbeddingResponse(1));
+    vi.mocked(Ollama.prototype.embed).mockResolvedValue(
+      fakeEmbeddingResponse(1) as never,
+    );
 
     const result = await embed('hello');
 
@@ -53,8 +44,7 @@ describe('embed()', () => {
   });
 
   it('returns null when Ollama client throws (connection refused)', async () => {
-    const mockEmbed = await getMockEmbed();
-    mockEmbed.mockRejectedValue(new Error('ECONNREFUSED'));
+    vi.mocked(Ollama.prototype.embed).mockRejectedValue(new Error('ECONNREFUSED'));
 
     const result = await embed('hello');
 
@@ -62,8 +52,7 @@ describe('embed()', () => {
   });
 
   it('never throws even on unexpected errors', async () => {
-    const mockEmbed = await getMockEmbed();
-    mockEmbed.mockRejectedValue(new TypeError('unexpected'));
+    vi.mocked(Ollama.prototype.embed).mockRejectedValue(new TypeError('unexpected'));
 
     await expect(embed('hello')).resolves.toBeNull();
   });
@@ -73,8 +62,9 @@ describe('embed()', () => {
 
 describe('batchEmbed()', () => {
   it('returns Float32Array[] of correct length on success', async () => {
-    const mockEmbed = await getMockEmbed();
-    mockEmbed.mockResolvedValue(fakeEmbeddingResponse(2));
+    vi.mocked(Ollama.prototype.embed).mockResolvedValue(
+      fakeEmbeddingResponse(2) as never,
+    );
 
     const result = await batchEmbed(['a', 'b']);
 
@@ -88,8 +78,7 @@ describe('batchEmbed()', () => {
   });
 
   it('returns null when Ollama client throws', async () => {
-    const mockEmbed = await getMockEmbed();
-    mockEmbed.mockRejectedValue(new Error('ECONNREFUSED'));
+    vi.mocked(Ollama.prototype.embed).mockRejectedValue(new Error('ECONNREFUSED'));
 
     const result = await batchEmbed(['a', 'b']);
 
@@ -97,8 +86,7 @@ describe('batchEmbed()', () => {
   });
 
   it('never throws even on unexpected errors', async () => {
-    const mockEmbed = await getMockEmbed();
-    mockEmbed.mockRejectedValue(new TypeError('unexpected'));
+    vi.mocked(Ollama.prototype.embed).mockRejectedValue(new TypeError('unexpected'));
 
     await expect(batchEmbed(['x'])).resolves.toBeNull();
   });
@@ -208,8 +196,7 @@ describe('storeEmbedding()', () => {
 
 describe('checkOllamaReachability()', () => {
   it('logs warning when Ollama is unreachable', async () => {
-    const mockEmbed = await getMockEmbed();
-    mockEmbed.mockRejectedValue(new Error('ECONNREFUSED'));
+    vi.mocked(Ollama.prototype.embed).mockRejectedValue(new Error('ECONNREFUSED'));
 
     const { logger } = await import('./logger.js');
     const warnSpy = vi.spyOn(logger, 'warn');
@@ -225,8 +212,9 @@ describe('checkOllamaReachability()', () => {
   });
 
   it('succeeds silently when Ollama is reachable', async () => {
-    const mockEmbed = await getMockEmbed();
-    mockEmbed.mockResolvedValue(fakeEmbeddingResponse(1));
+    vi.mocked(Ollama.prototype.embed).mockResolvedValue(
+      fakeEmbeddingResponse(1) as never,
+    );
 
     const { logger } = await import('./logger.js');
     const warnSpy = vi.spyOn(logger, 'warn');
@@ -239,8 +227,7 @@ describe('checkOllamaReachability()', () => {
   });
 
   it('never throws even on unexpected errors', async () => {
-    const mockEmbed = await getMockEmbed();
-    mockEmbed.mockRejectedValue(new Error('unexpected'));
+    vi.mocked(Ollama.prototype.embed).mockRejectedValue(new Error('unexpected'));
 
     await expect(checkOllamaReachability()).resolves.toBeUndefined();
   });
