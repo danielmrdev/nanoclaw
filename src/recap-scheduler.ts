@@ -85,6 +85,9 @@ function buildDailyRecapPrompt(groupFolder: string): string {
 
 Your job: Generate a daily memory recap for today.
 
+Available function: archiveOldConversations from nanoclaw/src/conversation-archiver.ts
+Signature: archiveOldConversations({ groupFolder: string }) => { archived: string[], skipped: string[] }
+
 Instructions:
 1. Read all conversation messages from SQLite for today (the past 24 hours).
    Use the getMessagesSince() function or read from the IPC/filesystem — use whatever is available in your context.
@@ -93,7 +96,11 @@ Instructions:
    (use today's actual date for the path, e.g. daily/2026-03/2026-03-05.md)
 4. Use atomic write: write to the .tmp file first, then rename.
 5. After writing the recap, update the last_recap_timestamp in SQLite for this group's daily cadence.
-6. Run conversation archival: move conversation files older than 30 days to conversations/archive/YYYY-MM/.
+6. Run conversation archival after the recap file is confirmed written:
+   - Import and call archiveOldConversations({ groupFolder: "${groupFolder}" }) from src/conversation-archiver.ts
+   - Log: "Archived: {result.archived.length} files, skipped: {result.skipped.length} files"
+   - Do NOT delete any files — archiveOldConversations only moves them to conversations/archive/YYYY-MM/
+   - If archival fails, log the error and continue (recap is already written — don't undo it)
 
 Recap format:
 \`\`\`markdown
