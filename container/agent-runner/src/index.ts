@@ -675,6 +675,39 @@ async function main(): Promise<void> {
       }
 
       log(`Got new message (${nextMessage.length} chars), starting new query`);
+
+      // Handle /memory command in IPC follow-up messages (same as initial prompt)
+      if (nextMessage.toLowerCase().includes('/memory')) {
+        try {
+          const groupPath = '/workspace/group';
+          const searchMatch = nextMessage.toLowerCase().match(/\/memory\s+what\s+do\s+you\s+know\s+about\s+(.+)/);
+          const result = await introspectMemory(groupPath);
+          let report = formatIntrospectReport(result);
+          if (searchMatch) {
+            const query = searchMatch[1].trim();
+            const searchSection = searchMemory(groupPath, query);
+            report = `${report}\n\n${searchSection}`;
+          }
+          writeOutput({ status: 'success', result: report, newSessionId: sessionId });
+          // Emit session update so host tracks session, then wait for next message
+          writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+          const followUp = await waitForIpcMessage();
+          if (followUp === null) {
+            log('Close sentinel received after /memory, exiting');
+            break;
+          }
+          prompt = followUp;
+        } catch (err) {
+          writeOutput({
+            status: 'error',
+            result: null,
+            error: `memory failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+          break;
+        }
+        continue;
+      }
+
       prompt = nextMessage;
     }
   } catch (err) {
