@@ -18,6 +18,17 @@ import fs from 'fs';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+import { loadMemoryContext } from './memory-loader.js';
+
+// Memory loading budget — mirrors src/config.ts defaults, configurable via env
+const MEMORY_CONTEXT_BUDGET = parseInt(process.env.MEMORY_CONTEXT_BUDGET || '8000', 10);
+const MEMORY_LAYER_ALLOCATION = {
+  tacit: 0.15,
+  daily: 0.35,
+  conversation: 0.3,
+  knowledge: 0.2,
+};
+const LOW_MEMORY_BUDGET_WARNING_PERCENT = 0.3;
 
 interface ContainerInput {
   prompt: string;
@@ -398,6 +409,49 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
+  // Load memory context (4 layers: tacit, knowledge, daily recaps, conversation)
+  let memoryPreamble = '';
+  try {
+    if (!containerInput.isMain) {
+      const groupPath = `/workspace/group`;
+      const memoryContext = await loadMemoryContext(
+        groupPath,
+        MEMORY_CONTEXT_BUDGET,
+        MEMORY_LAYER_ALLOCATION,
+      );
+
+      if (memoryContext.tacit) {
+        memoryPreamble += `## Behavior Rules (Tacit Knowledge)\n\n${memoryContext.tacit}\n\n`;
+      }
+      if (memoryContext.knowledgeIndex) {
+        memoryPreamble += `## Knowledge Base Orientation\n\n${memoryContext.knowledgeIndex}\n\n`;
+      }
+      if (memoryContext.dailyRecaps) {
+        memoryPreamble += `## Recent Daily Notes\n\n${memoryContext.dailyRecaps}\n\n`;
+      }
+      if (memoryContext.lastConversation) {
+        memoryPreamble += `## Last Conversation (For Continuity)\n\n${memoryContext.lastConversation}\n\n`;
+      }
+
+      const totalLoaded = memoryContext.tokenEstimate.total;
+      const remaining = Math.max(0, MEMORY_CONTEXT_BUDGET - totalLoaded);
+      const remainingPercent = ((remaining / MEMORY_CONTEXT_BUDGET) * 100).toFixed(0);
+      log(
+        `Memory loaded: ${totalLoaded}t tokens (tacit=${memoryContext.tokenEstimate.tacit}t, daily=${memoryContext.tokenEstimate.dailyRecaps}t, conv=${memoryContext.tokenEstimate.lastConversation}t, know=${memoryContext.tokenEstimate.knowledgeIndex}t) — ${remainingPercent}% budget remaining`,
+      );
+
+      if (remaining < MEMORY_CONTEXT_BUDGET * LOW_MEMORY_BUDGET_WARNING_PERCENT) {
+        log(
+          `WARNING: Memory budget tight (${remainingPercent}% remaining). Agent may have limited context for reasoning.`,
+        );
+      }
+    }
+  } catch (err) {
+    log(
+      `Memory loading failed: ${err instanceof Error ? err.message : String(err)} — continuing without memory`,
+    );
+  }
+
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
@@ -421,8 +475,12 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
+      systemPrompt: (globalClaudeMd || memoryPreamble)
+        ? {
+            type: 'preset' as const,
+            preset: 'claude_code' as const,
+            append: memoryPreamble + (globalClaudeMd || ''),
+          }
         : undefined,
       allowedTools: [
         'Bash',
