@@ -406,14 +406,14 @@ async function runQuery(
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
   let globalClaudeMd: string | undefined;
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
+  if (fs.existsSync(globalClaudeMdPath)) {
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
   // Load memory context (4 layers: tacit, knowledge, daily recaps, conversation)
   let memoryPreamble = '';
   try {
-    if (!containerInput.isMain) {
+    {
       const groupPath = `/workspace/group`;
       const memoryContext = await loadMemoryContext(
         groupPath,

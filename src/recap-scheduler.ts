@@ -51,7 +51,7 @@ export function ensureRecapTasks(): void {
   const now = new Date().toISOString();
 
   for (const [jid, group] of Object.entries(groups)) {
-    if (group.folder === MAIN_GROUP_FOLDER) continue;
+    // All groups get recaps, including main
 
     const existingTasks = getTasksForGroup(group.folder);
     const existingIds = new Set(existingTasks.map((t) => t.id));
