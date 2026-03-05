@@ -205,19 +205,6 @@ export class TelegramChannel implements Channel {
       await next();
     });
 
-    // Command to list available commands
-    this.bot.command('help', (ctx) => {
-      ctx.reply(
-        `/help — Show this list\n` +
-        `/ping — Check if the bot is online\n` +
-        `/version — Show NanoClaw version\n` +
-        `/status — System status report\n` +
-        `/restart — Restart NanoClaw\n` +
-        `/chatid — Get this chat's registration ID\n` +
-        `/memory — Show memory state (knowledge, daily notes, conversations)`,
-      );
-    });
-
     // Command to show NanoClaw version
     this.bot.command('version', (ctx) => {
       ctx.reply(`NanoClaw v${NC_VERSION}`);
@@ -445,13 +432,12 @@ ${systemStatusBody}`;
 
     // Register bot commands in Telegram (shows in the "/" menu)
     await this.bot.api.setMyCommands([
-      { command: 'help',    description: 'Show available commands' },
-      { command: 'ping',    description: 'Check if the bot is online' },
-      { command: 'version', description: 'Show NanoClaw version' },
-      { command: 'status',  description: 'System status report' },
-      { command: 'restart', description: 'Restart NanoClaw' },
       { command: 'chatid',  description: 'Get this chat registration ID' },
       { command: 'memory',  description: 'Show memory state' },
+      { command: 'ping',    description: 'Check if the bot is online' },
+      { command: 'restart', description: 'Restart NanoClaw' },
+      { command: 'status',  description: 'System status report' },
+      { command: 'version', description: 'Show NanoClaw version' },
     ]);
 
     // Start polling — returns a Promise that resolves when started
