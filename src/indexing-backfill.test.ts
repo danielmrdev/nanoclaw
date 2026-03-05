@@ -173,14 +173,16 @@ describe('backfillGroupEmbeddings() — batchEmbed returns null', () => {
 
 // Test 6: yieldLoop called between batches
 describe('backfillGroupEmbeddings() — setImmediate yield between batches', () => {
-  it('calls setImmediate at least twice for 3 files with batch size 2', async () => {
+  it('calls setImmediate at least once per batch', async () => {
     if (!isSemanticsEnabled()) {
       console.log('sqlite-vec not available — skipping');
       return;
     }
 
+    // With default batch size 50, all 3 files fit in 1 batch → setImmediate called once.
+    // The mock must return 3 vectors (one per file in the batch).
     vi.mocked(Ollama.prototype.embed).mockResolvedValue(
-      fakeEmbeddingResponse(2) as never,
+      fakeEmbeddingResponse(3) as never,
     );
 
     const setImmediateSpy = vi.spyOn(globalThis, 'setImmediate');
@@ -190,21 +192,12 @@ describe('backfillGroupEmbeddings() — setImmediate yield between batches', () 
     writeFile(path.join(groupDir, 'daily', '2026-03', '2026-03-02.md'), 'day 2');
     writeFile(path.join(groupDir, 'knowledge', 'food.md'), 'food facts');
 
-    // Temporarily set batch size to 2 via env
-    vi.stubEnv('BACKFILL_BATCH_SIZE', '2');
-
-    // NOTE: BACKFILL_BATCH_SIZE is read at module import time as a constant,
-    // so env stub won't affect an already-loaded module. Instead we verify
-    // that setImmediate is called at least once per batch iteration.
-    // With default batch size 50, all 3 files fit in 1 batch → 1 yield call.
-    // We just verify setImmediate is called at least once.
     await backfillGroupEmbeddings('yield-group', {
       groupsDir: tmpDir,
       db: _getTestDb(),
     });
 
-    vi.unstubAllEnvs();
-
+    // setImmediate is called once per batch (even when there is only 1 batch)
     expect(setImmediateSpy).toHaveBeenCalled();
     setImmediateSpy.mockRestore();
   });
