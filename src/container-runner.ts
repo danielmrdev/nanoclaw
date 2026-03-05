@@ -26,7 +26,6 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import { validateToken } from './token-validator.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -223,140 +222,13 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function readKeychainToken(): string | undefined {
-  logger.debug(
-    'Attempting to read CLAUDE_CODE_OAUTH_TOKEN from macOS Keystore',
-  );
-  try {
-    const raw = execSync(
-      'security find-generic-password -s "Claude Code-credentials" -w',
-      { encoding: 'utf8', timeout: 5000 },
-    ).trim();
-
-    if (!raw) {
-      logger.warn('Keystore returned empty value for Claude Code-credentials');
-      return undefined;
-    }
-
-    logger.debug(
-      { byteLength: Buffer.byteLength(raw, 'utf8') },
-      'Keystore read succeeded — parsing JSON',
-    );
-
-    let creds: unknown;
-    try {
-      creds = JSON.parse(raw);
-    } catch (parseErr) {
-      logger.error(
-        {
-          error:
-            parseErr instanceof Error ? parseErr.message : String(parseErr),
-        },
-        'Failed to parse Keystore JSON',
-      );
-      return undefined;
-    }
-
-    // Log JSON structure (keys only, never token value)
-    const topLevelKeys = Object.keys(creds as Record<string, unknown>);
-    const oauthKeys = (creds as any)?.claudeAiOauth
-      ? Object.keys((creds as any).claudeAiOauth)
-      : [];
-    logger.debug(
-      { topLevelKeys, oauthKeys },
-      'Keystore JSON parsed — structure logged (no token value)',
-    );
-
-    const validation = validateToken(creds);
-    if (!validation.valid) {
-      logger.warn(
-        { reason: validation.reason },
-        'Keystore token failed validation',
-      );
-      return undefined;
-    }
-
-    const c = creds as any;
-    const token: string = c.claudeAiOauth.accessToken;
-    const expiresAt: number | undefined = c.claudeAiOauth.expiresAt;
-    const email: string | undefined = c.claudeAiOauth.account?.emailAddress;
-
-    logger.debug(
-      {
-        tokenLength: token.length,
-        tokenPrefix: token.slice(0, 12) + '...',
-        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : 'not set',
-        account: email ?? 'unknown',
-        expiresInMs: expiresAt ? expiresAt - Date.now() : null,
-      },
-      'Token metadata (value masked)',
-    );
-
-    return token;
-  } catch (err) {
-    logger.error(
-      {
-        error: err instanceof Error ? err.message : String(err),
-        code: (err as any)?.status,
-      },
-      'Keystore read failed (security command error)',
-    );
-    return undefined;
-  }
-}
-
-/**
- * Read allowed secrets from .env for passing to the container via stdin.
- * Secrets are never written to disk or mounted as files.
- */
 export function readSecrets(): Record<string, string> {
-  const secrets = readEnvFile([
+  return readEnvFile([
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
-    'GITHUB_TOKEN',
-    'BACKUP_PASSPHRASE',
-    'BACKUP_GDRIVE_FOLDER',
+    'ANTHROPIC_BASE_URL',
+    'ANTHROPIC_AUTH_TOKEN',
   ]);
-
-  // Validate token sourced from .env (Keystore path already validates in readKeychainToken)
-  if (secrets['CLAUDE_CODE_OAUTH_TOKEN']) {
-    const envToken = secrets['CLAUDE_CODE_OAUTH_TOKEN'].trim();
-    if (!envToken) {
-      // Empty string after trim — treat as absent, fall through to Keystore
-      delete secrets['CLAUDE_CODE_OAUTH_TOKEN'];
-    } else {
-      // Wrap token in the creds structure validateToken expects
-      const fakeCreds = { claudeAiOauth: { accessToken: envToken } };
-      const validation = validateToken(fakeCreds);
-      if (!validation.valid) {
-        logger.error(
-          { reason: validation.reason },
-          '.env CLAUDE_CODE_OAUTH_TOKEN failed validation — removing from secrets',
-        );
-        delete secrets['CLAUDE_CODE_OAUTH_TOKEN'];
-      } else {
-        logger.debug('CLAUDE_CODE_OAUTH_TOKEN from .env passed validation');
-      }
-    }
-  }
-
-  // If not in .env (or removed due to validation failure), read from macOS keychain
-  if (!secrets['CLAUDE_CODE_OAUTH_TOKEN']) {
-    logger.debug(
-      'CLAUDE_CODE_OAUTH_TOKEN not in .env — attempting Keystore read',
-    );
-    const keychainToken = readKeychainToken();
-    if (keychainToken) {
-      logger.info('CLAUDE_CODE_OAUTH_TOKEN loaded from macOS Keystore');
-      secrets['CLAUDE_CODE_OAUTH_TOKEN'] = keychainToken;
-    } else {
-      logger.warn(
-        'CLAUDE_CODE_OAUTH_TOKEN unavailable: not in .env and Keystore read failed or returned invalid token',
-      );
-    }
-  }
-
-  return secrets;
 }
 
 function buildContainerArgs(
