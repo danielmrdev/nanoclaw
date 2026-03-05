@@ -19,6 +19,7 @@ import path from 'path';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 import { loadMemoryContext } from './memory-loader.js';
+import { introspectMemory, formatIntrospectReport, searchMemory } from './introspect-memory.js';
 
 // Memory loading budget — mirrors src/config.ts defaults, configurable via env
 const MEMORY_CONTEXT_BUDGET = parseInt(process.env.MEMORY_CONTEXT_BUDGET || '8000', 10);
@@ -614,6 +615,29 @@ async function main(): Promise<void> {
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
     prompt += '\n' + pending.join('\n');
+  }
+
+  // Handle /introspect-memory command without invoking Claude
+  if (prompt.toLowerCase().includes('/introspect-memory')) {
+    try {
+      const groupPath = '/workspace/group';
+      const searchMatch = prompt.toLowerCase().match(/\/introspect-memory\s+what\s+do\s+you\s+know\s+about\s+(.+)/);
+      const result = await introspectMemory(groupPath);
+      let report = formatIntrospectReport(result);
+      if (searchMatch) {
+        const query = searchMatch[1].trim();
+        const searchSection = searchMemory(groupPath, query);
+        report = `${report}\n\n${searchSection}`;
+      }
+      writeOutput({ status: 'success', result: report });
+    } catch (err) {
+      writeOutput({
+        status: 'error',
+        result: null,
+        error: `introspect-memory failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+    return;
   }
 
   // Query loop: run query → wait for IPC message → run new query → repeat
