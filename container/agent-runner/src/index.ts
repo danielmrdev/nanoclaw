@@ -617,11 +617,11 @@ async function main(): Promise<void> {
     prompt += '\n' + pending.join('\n');
   }
 
-  // Handle /introspect-memory command without invoking Claude
-  if (prompt.toLowerCase().includes('/introspect-memory')) {
+  // Handle /memory command without invoking Claude
+  if (prompt.toLowerCase().includes('/memory')) {
     try {
       const groupPath = '/workspace/group';
-      const searchMatch = prompt.toLowerCase().match(/\/introspect-memory\s+what\s+do\s+you\s+know\s+about\s+(.+)/);
+      const searchMatch = prompt.toLowerCase().match(/\/memory\s+what\s+do\s+you\s+know\s+about\s+(.+)/);
       const result = await introspectMemory(groupPath);
       let report = formatIntrospectReport(result);
       if (searchMatch) {
@@ -634,7 +634,7 @@ async function main(): Promise<void> {
       writeOutput({
         status: 'error',
         result: null,
-        error: `introspect-memory failed: ${err instanceof Error ? err.message : String(err)}`,
+        error: `memory failed: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
     return;
