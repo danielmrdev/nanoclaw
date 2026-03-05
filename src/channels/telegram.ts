@@ -92,25 +92,39 @@ function splitHtmlIntelligently(html: string, maxLength: number): string[] {
 }
 
 function buildMemoryReport(groupPath: string): string {
-  const lines: string[] = ['## Memory State', ''];
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+  const lines: string[] = [`## Estado de Memoria — ${dateStr}`, ''];
 
-  // Knowledge categories
+  // Knowledge: scan subdirectories (categories contain the .md files)
   const knowledgeDir = path.join(groupPath, 'knowledge');
-  let knowledgeFiles: string[] = [];
+  const categories: Array<{ name: string; files: string[] }> = [];
+  let totalKnowledgeFiles = 0;
   try {
     if (fs.existsSync(knowledgeDir)) {
-      knowledgeFiles = fs.readdirSync(knowledgeDir).filter((f) => f.endsWith('.md') && f !== '_index.md').sort();
+      for (const entry of fs.readdirSync(knowledgeDir).sort()) {
+        const entryPath = path.join(knowledgeDir, entry);
+        try {
+          if (fs.statSync(entryPath).isDirectory()) {
+            const files = fs.readdirSync(entryPath).filter((f) => f.endsWith('.md')).map((f) => f.replace(/\.md$/, '')).sort();
+            if (files.length > 0) {
+              categories.push({ name: entry, files });
+              totalKnowledgeFiles += files.length;
+            }
+          }
+        } catch { /* ignore */ }
+      }
     }
   } catch { /* ignore */ }
-  lines.push(`**Knowledge** (${knowledgeFiles.length} files):`);
-  if (knowledgeFiles.length > 0) {
-    for (const f of knowledgeFiles) lines.push(`- ${f.replace(/\.md$/, '')}`);
+  lines.push(`**Knowledge Base** (${totalKnowledgeFiles} archivos, ${categories.length} categorías):`);
+  if (categories.length > 0) {
+    for (const cat of categories) lines.push(`- ${cat.name} (${cat.files.length}): ${cat.files.join(', ')}`);
   } else {
-    lines.push('- (none)');
+    lines.push('- (vacío)');
   }
   lines.push('');
 
-  // Recent daily notes
+  // Daily notes
   const dailyDir = path.join(groupPath, 'daily');
   const allDates: string[] = [];
   try {
@@ -127,12 +141,24 @@ function buildMemoryReport(groupPath: string): string {
       }
     }
   } catch { /* ignore */ }
-  const recentDates = allDates.sort((a, b) => b.localeCompare(a)).slice(0, 7);
-  lines.push(`**Daily Notes** (last 7):`);
+  const sortedDates = allDates.sort((a, b) => b.localeCompare(a));
+  const recentDates = sortedDates.slice(0, 7);
+  const lastDate = recentDates[0] ?? null;
+
+  // Detect gap between last note and today
+  let gapNote = '';
+  if (lastDate) {
+    const last = new Date(lastDate + 'T00:00:00');
+    const today = new Date(now.toISOString().split('T')[0] + 'T00:00:00');
+    const diffDays = Math.round((today.getTime() - last.getTime()) / 86400000);
+    if (diffDays > 1) gapNote = ` ⚠️ ${diffDays - 1} días sin nota`;
+  }
+
+  lines.push(`**Daily Notes**${gapNote}:`);
   if (recentDates.length > 0) {
-    for (const d of recentDates) lines.push(`- ${d}`);
+    lines.push(`- Últimas: ${recentDates.join(', ')}`);
   } else {
-    lines.push('- (none)');
+    lines.push('- (ninguna)');
   }
   lines.push('');
 
@@ -144,7 +170,7 @@ function buildMemoryReport(groupPath: string): string {
       convCount = fs.readdirSync(conversationsDir).filter((f) => f.endsWith('.md')).length;
     }
   } catch { /* ignore */ }
-  lines.push(`**Conversations**: ${convCount} total`);
+  lines.push(`**Conversaciones archivadas**: ${convCount}`);
 
   return lines.join('\n');
 }
