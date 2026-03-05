@@ -7,6 +7,7 @@ import {
   batchEmbed,
   contentHash,
   storeEmbedding,
+  deleteEmbedding,
   checkOllamaReachability,
   _resetClient,
 } from './embedding-service.js';
@@ -189,6 +190,53 @@ describe('storeEmbedding()', () => {
       .prepare('SELECT rowid FROM vec_embeddings WHERE rowid = ?')
       .get(firstRowId);
     expect(oldVec).toBeUndefined();
+  });
+});
+
+// --- deleteEmbedding() ---
+
+describe('deleteEmbedding()', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+  });
+
+  it('removes both embedding_meta and vec_embeddings rows after a store', () => {
+    if (!isSemanticsEnabled()) {
+      console.log('sqlite-vec not available, skipping deleteEmbedding tests');
+      return;
+    }
+
+    const db = _getTestDb();
+    const vec = new Float32Array(EMBEDDING_DIM).fill(0.2);
+
+    storeEmbedding(db, 'group1', 'fact', 'knowledge/pref.md', 'some fact', vec);
+
+    const beforeMeta = db
+      .prepare('SELECT * FROM embedding_meta WHERE group_folder = ?')
+      .all('group1');
+    expect(beforeMeta).toHaveLength(1);
+
+    deleteEmbedding(db, 'group1', 'fact', 'knowledge/pref.md');
+
+    const afterMeta = db
+      .prepare('SELECT * FROM embedding_meta WHERE group_folder = ?')
+      .all('group1');
+    expect(afterMeta).toHaveLength(0);
+
+    const afterVec = db
+      .prepare('SELECT rowid FROM vec_embeddings')
+      .all();
+    expect(afterVec).toHaveLength(0);
+  });
+
+  it('does not throw when the key does not exist (no-op)', () => {
+    if (!isSemanticsEnabled()) return;
+
+    const db = _getTestDb();
+
+    expect(() =>
+      deleteEmbedding(db, 'nonexistent', 'fact', 'knowledge/missing.md'),
+    ).not.toThrow();
   });
 });
 

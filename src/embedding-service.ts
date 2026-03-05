@@ -139,6 +139,32 @@ export function storeEmbedding(
 }
 
 /**
+ * Delete a stored embedding by its composite key (groupFolder, sourceType, sourcePath).
+ * If no matching row exists, returns without error (no-op).
+ * Deletes from both vec_embeddings and embedding_meta in a single transaction.
+ */
+export function deleteEmbedding(
+  db: Database.Database,
+  groupFolder: string,
+  sourceType: string,
+  sourcePath: string,
+): void {
+  const row = db
+    .prepare(
+      `SELECT id, vec_rowid FROM embedding_meta
+       WHERE group_folder = ? AND source_type = ? AND source_path = ?`,
+    )
+    .get(groupFolder, sourceType, sourcePath) as
+    | { id: number; vec_rowid: number }
+    | undefined;
+  if (!row) return;
+  db.transaction(() => {
+    db.prepare('DELETE FROM vec_embeddings WHERE rowid = ?').run(row.vec_rowid);
+    db.prepare('DELETE FROM embedding_meta WHERE id = ?').run(row.id);
+  })();
+}
+
+/**
  * Probe Ollama reachability at startup.
  * Logs an info message on success, a pino warning on failure.
  * Never throws — intended to be fire-and-forget.
