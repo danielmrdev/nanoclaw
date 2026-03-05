@@ -1,8 +1,9 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import * as sqliteVec from 'sqlite-vec';
 
-import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
+import { ASSISTANT_NAME, DATA_DIR, EMBEDDING_DIM, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -13,6 +14,16 @@ import {
 } from './types.js';
 
 let db: Database.Database;
+let semanticsEnabled = false;
+
+function loadSqliteVec(database: Database.Database): void {
+  try {
+    sqliteVec.load(database);
+    semanticsEnabled = true;
+  } catch (err) {
+    logger.warn({ err }, 'sqlite-vec failed to load — semantic search disabled');
+  }
+}
 
 function createSchema(database: Database.Database): void {
   database.exec(`
@@ -132,6 +143,30 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Semantic search schema — only created when sqlite-vec extension loaded successfully.
+  // vec0 virtual table CANNOT be created without the extension: guard is mandatory.
+  if (semanticsEnabled) {
+    database.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
+        embedding float[${EMBEDDING_DIM}] distance_metric=cosine
+      );
+    `);
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS embedding_meta (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_folder TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_path TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        vec_rowid INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(group_folder, source_type, source_path)
+      );
+      CREATE INDEX IF NOT EXISTS idx_embedding_meta_hash ON embedding_meta(content_hash);
+      CREATE INDEX IF NOT EXISTS idx_embedding_meta_group ON embedding_meta(group_folder);
+    `);
+  }
 }
 
 export function initDatabase(): void {
@@ -139,6 +174,7 @@ export function initDatabase(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
+  loadSqliteVec(db);
   createSchema(db);
 
   // Migrate from JSON files if they exist
@@ -147,8 +183,19 @@ export function initDatabase(): void {
 
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
+  semanticsEnabled = false;
   db = new Database(':memory:');
+  loadSqliteVec(db);
   createSchema(db);
+}
+
+/** @internal - for tests only. Returns the raw database handle. */
+export function _getTestDb(): Database.Database {
+  return db;
+}
+
+export function isSemanticsEnabled(): boolean {
+  return semanticsEnabled;
 }
 
 /**

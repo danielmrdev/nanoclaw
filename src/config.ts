@@ -14,6 +14,9 @@ const envConfig = readEnvFile([
   'WEBSOCKET_ENABLED',
   'WEBSOCKET_PORT',
   'WEBSOCKET_FILES_PORT',
+  'OLLAMA_HOST',
+  'OLLAMA_TIMEOUT_MS',
+  'EMBEDDING_MODEL',
 ]);
 
 export const ASSISTANT_NAME =
@@ -111,3 +114,15 @@ export const MEMORY_LAYER_ALLOCATION = {
 // If remaining context budget after memory loading < this threshold,
 // log a warning so operator knows memory is tight
 export const LOW_MEMORY_BUDGET_WARNING_PERCENT = 0.3; // 30% of context window
+
+// Embedding / semantic search configuration
+// EMBEDDING_DIM must never change after the vec_embeddings table is created.
+export const EMBEDDING_DIM = 768;
+export const EMBEDDING_MODEL =
+  process.env.EMBEDDING_MODEL || envConfig.EMBEDDING_MODEL || 'nomic-embed-text';
+export const OLLAMA_HOST =
+  process.env.OLLAMA_HOST || envConfig.OLLAMA_HOST || 'http://127.0.0.1:11434';
+export const OLLAMA_TIMEOUT_MS = parseInt(
+  process.env.OLLAMA_TIMEOUT_MS || envConfig.OLLAMA_TIMEOUT_MS || '10000',
+  10,
+);

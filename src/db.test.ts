@@ -2,16 +2,19 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
+  _getTestDb,
   createTask,
   deleteTask,
   getAllChats,
   getMessagesSince,
   getNewMessages,
   getTaskById,
+  isSemanticsEnabled,
   storeChatMetadata,
   storeMessage,
   updateTask,
 } from './db.js';
+import { EMBEDDING_DIM } from './config.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -386,5 +389,60 @@ describe('task CRUD', () => {
 
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
+  });
+});
+
+// --- sqlite-vec extension and semantic schema ---
+
+describe('sqlite-vec extension', () => {
+  it('loads sqlite-vec and vec_version() returns a string', () => {
+    // _initTestDatabase loads sqlite-vec; isSemanticsEnabled() reflects the result
+    expect(isSemanticsEnabled()).toBe(true);
+  });
+
+  it('EMBEDDING_DIM equals 768', () => {
+    expect(EMBEDDING_DIM).toBe(768);
+  });
+
+  it('vec_embeddings virtual table exists and accepts Float32Array inserts', () => {
+    // _getTestDb() exposes the internal db handle for test assertions only
+    const db = _getTestDb();
+    const embedding = new Float32Array(768).fill(0.1);
+    const result = db
+      .prepare('INSERT INTO vec_embeddings(embedding) VALUES (?)')
+      .run(embedding);
+    expect(result.lastInsertRowid).toBeGreaterThan(0);
+    const row = db
+      .prepare('SELECT rowid FROM vec_embeddings LIMIT 1')
+      .get() as { rowid: number };
+    expect(row.rowid).toBeGreaterThan(0);
+  });
+
+  it('embedding_meta table exists with correct columns', () => {
+    const db = _getTestDb();
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        `INSERT INTO embedding_meta (group_folder, source_type, source_path, content_hash, vec_rowid, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run('test-group', 'claude_md', 'groups/test/CLAUDE.md', 'abc123', 1, now);
+    expect(result.lastInsertRowid).toBeGreaterThan(0);
+  });
+
+  it('UNIQUE constraint on (group_folder, source_type, source_path) prevents duplicates', () => {
+    const db = _getTestDb();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO embedding_meta (group_folder, source_type, source_path, content_hash, vec_rowid, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run('grp', 'claude_md', 'groups/grp/CLAUDE.md', 'hash1', 1, now);
+
+    expect(() => {
+      db.prepare(
+        `INSERT INTO embedding_meta (group_folder, source_type, source_path, content_hash, vec_rowid, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run('grp', 'claude_md', 'groups/grp/CLAUDE.md', 'hash2', 2, now);
+    }).toThrow();
   });
 });

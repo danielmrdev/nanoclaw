@@ -26,6 +26,9 @@ importers:
       marked:
         specifier: ^17.0.3
         version: 17.0.3
+      ollama:
+        specifier: ^0.6.3
+        version: 0.6.3
       pino:
         specifier: ^9.14.0
         version: 9.14.0
@@ -38,6 +41,9 @@ importers:
       qrcode-terminal:
         specifier: ^0.12.0
         version: 0.12.0
+      sqlite-vec:
+        specifier: 0.1.7-alpha.10
+        version: 0.1.7-alpha.10
       ws:
         specifier: ^8.19.0
         version: 8.19.0
@@ -1049,6 +1055,9 @@ packages:
   obug@2.1.1:
     resolution: {integrity: sha512-uTqF9MuPraAQ+IsnPf366RG4cP9RtUi7MLO1N3KEc+wb0a6yKpeL0lmk2IB1jY5KHPAlTc6T/JRdC/YqxHNwkQ==}
 
+  ollama@0.6.3:
+    resolution: {integrity: sha512-KEWEhIqE5wtfzEIZbDCLH51VFZ6Z3ZSa6sIOg/E/tBV8S51flyqBOXi+bRxlOYKDf8i327zG9eSTb8IJxvm3Zg==}
+
   on-exit-leak-free@2.1.2:
     resolution: {integrity: sha512-0eJJY6hXLGf1udHwfNftBqH+g73EU4B504nZeKpz1sYRKafAghwxEJunB2O7rDZkL4PGfsMVnTXZ2EjibbqcsA==}
     engines: {node: '>=14.0.0'}
@@ -1225,6 +1234,34 @@ packages:
     resolution: {integrity: sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==}
     engines: {node: '>= 10.x'}
 
+  sqlite-vec-darwin-arm64@0.1.7-alpha.10:
+    resolution: {integrity: sha512-N5szkSqosdu8qwn1OuyotWOJUvEU3dTkWLyvWkb1+CVcz+SwTS1RTC/ttvhtWwgCCpvmvhs2hBXhdyWi4yJPvw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  sqlite-vec-darwin-x64@0.1.7-alpha.10:
+    resolution: {integrity: sha512-djqhGx1PSaRGOnO7xSdoECMFMT2ukqovQau6Q80zCxeryF0TG5fQUcD3QWHnFdiGuv1EBI8vg0Nogo1l1/16+A==}
+    cpu: [x64]
+    os: [darwin]
+
+  sqlite-vec-linux-arm64@0.1.7-alpha.10:
+    resolution: {integrity: sha512-sceY1waSQUbcSxsm0ZO7vrexqEyktMr87FKh3z9ybUJX+MeYlzOlks9gYouf8VxJI24yAVKUc9c8RpK58M1W6A==}
+    cpu: [arm64]
+    os: [linux]
+
+  sqlite-vec-linux-x64@0.1.7-alpha.10:
+    resolution: {integrity: sha512-4J3Mxy0pv7j1xbc90uZz6AmiVc2q29ujSEucLiDKIVjCcKKn43VaIbAfBRx1cu4a6IYSAQ/3s9NAG1VxmVrNjA==}
+    cpu: [x64]
+    os: [linux]
+
+  sqlite-vec-windows-x64@0.1.7-alpha.10:
+    resolution: {integrity: sha512-yLMKOxqXBlowwQSH/G/lpZ6Nax/KCV5+KGb5p9ANmNohB/ty/O7OEoCZ7kFpzm/FvKBjT/LfKA8qIKL2GrJEJQ==}
+    cpu: [x64]
+    os: [win32]
+
+  sqlite-vec@0.1.7-alpha.10:
+    resolution: {integrity: sha512-Nfli+/gNS12O8Fn72qQ6DKQJto89t/fhSVclAx8G+QOC0l6mSzDvy4AQfxjuCs6mQAnQQVWpjRG266shewoUtg==}
+
   stackback@0.0.2:
     resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
 
@@ -1392,6 +1429,9 @@ packages:
 
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
+
+  whatwg-fetch@3.6.20:
+    resolution: {integrity: sha512-EqhiFU6daOA8kpjOWTL0olhVOF3i7OrFzSYiGsEMB8GcXS+RrzauAERX65xMeNWVqxA6HXH2m69Z9LaKKdisfg==}
 
   whatwg-url@5.0.0:
     resolution: {integrity: sha512-saE57nupxk6v3HY35+jzBwYa0rKSy0XR8JSxZPwgLr7ys0IBzhGviA1/TUGJLmSVqs8pb9AnvICXEuOHLprYTw==}
@@ -2208,6 +2248,10 @@ snapshots:
 
   obug@2.1.1: {}
 
+  ollama@0.6.3:
+    dependencies:
+      whatwg-fetch: 3.6.20
+
   on-exit-leak-free@2.1.2: {}
 
   once@1.4.0:
@@ -2467,6 +2511,29 @@ snapshots:
 
   split2@4.2.0: {}
 
+  sqlite-vec-darwin-arm64@0.1.7-alpha.10:
+    optional: true
+
+  sqlite-vec-darwin-x64@0.1.7-alpha.10:
+    optional: true
+
+  sqlite-vec-linux-arm64@0.1.7-alpha.10:
+    optional: true
+
+  sqlite-vec-linux-x64@0.1.7-alpha.10:
+    optional: true
+
+  sqlite-vec-windows-x64@0.1.7-alpha.10:
+    optional: true
+
+  sqlite-vec@0.1.7-alpha.10:
+    optionalDependencies:
+      sqlite-vec-darwin-arm64: 0.1.7-alpha.10
+      sqlite-vec-darwin-x64: 0.1.7-alpha.10
+      sqlite-vec-linux-arm64: 0.1.7-alpha.10
+      sqlite-vec-linux-x64: 0.1.7-alpha.10
+      sqlite-vec-windows-x64: 0.1.7-alpha.10
+
   stackback@0.0.2: {}
 
   std-env@3.10.0: {}
@@ -2608,6 +2675,8 @@ snapshots:
       - yaml
 
   webidl-conversions@3.0.1: {}
+
+  whatwg-fetch@3.6.20: {}
 
   whatwg-url@5.0.0:
     dependencies:
