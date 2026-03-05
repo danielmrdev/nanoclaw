@@ -6,6 +6,9 @@ import { logger } from './logger.js';
 
 const DAILY_RECAP_CRON = process.env.DAILY_RECAP_CRON || '45 23 * * *';
 const WEEKLY_RECAP_CRON = process.env.WEEKLY_RECAP_CRON || '0 0 * * 0';
+const MONTHLY_RECAP_CRON = process.env.MONTHLY_RECAP_CRON || '0 0 1 * *';
+const SEMESTER_RECAP_CRON = process.env.SEMESTER_RECAP_CRON || '0 0 1 1,7 *';
+const ANNUAL_RECAP_CRON = process.env.ANNUAL_RECAP_CRON || '0 1 1 1 *';
 
 // Deterministic task IDs so idempotency check is reliable
 function dailyRecapTaskId(groupFolder: string): string {
@@ -14,6 +17,18 @@ function dailyRecapTaskId(groupFolder: string): string {
 
 function weeklyRecapTaskId(groupFolder: string): string {
   return `recap-weekly-${groupFolder}`;
+}
+
+function monthlyRecapTaskId(groupFolder: string): string {
+  return `recap-monthly-${groupFolder}`;
+}
+
+function semesterRecapTaskId(groupFolder: string): string {
+  return `recap-semester-${groupFolder}`;
+}
+
+function annualRecapTaskId(groupFolder: string): string {
+  return `recap-annual-${groupFolder}`;
 }
 
 function nextCronRun(cronExpr: string): string | null {
@@ -75,6 +90,69 @@ export function ensureRecapTasks(): void {
       logger.info(
         { groupFolder: group.folder, taskId: weeklyId },
         'Registered weekly recap task',
+      );
+    }
+
+    // --- Monthly recap ---
+    const monthlyId = monthlyRecapTaskId(group.folder);
+    if (!existingIds.has(monthlyId)) {
+      createTask({
+        id: monthlyId,
+        group_folder: group.folder,
+        chat_jid: jid,
+        prompt: buildMonthlyRecapPrompt(group.folder),
+        schedule_type: 'cron',
+        schedule_value: MONTHLY_RECAP_CRON,
+        context_mode: 'isolated',
+        next_run: nextCronRun(MONTHLY_RECAP_CRON),
+        status: 'active',
+        created_at: now,
+      });
+      logger.info(
+        { groupFolder: group.folder, taskId: monthlyId },
+        'Registered monthly recap task',
+      );
+    }
+
+    // --- Semester recap ---
+    const semesterId = semesterRecapTaskId(group.folder);
+    if (!existingIds.has(semesterId)) {
+      createTask({
+        id: semesterId,
+        group_folder: group.folder,
+        chat_jid: jid,
+        prompt: buildSemesterRecapPrompt(group.folder),
+        schedule_type: 'cron',
+        schedule_value: SEMESTER_RECAP_CRON,
+        context_mode: 'isolated',
+        next_run: nextCronRun(SEMESTER_RECAP_CRON),
+        status: 'active',
+        created_at: now,
+      });
+      logger.info(
+        { groupFolder: group.folder, taskId: semesterId },
+        'Registered semester recap task',
+      );
+    }
+
+    // --- Annual recap ---
+    const annualId = annualRecapTaskId(group.folder);
+    if (!existingIds.has(annualId)) {
+      createTask({
+        id: annualId,
+        group_folder: group.folder,
+        chat_jid: jid,
+        prompt: buildAnnualRecapPrompt(group.folder),
+        schedule_type: 'cron',
+        schedule_value: ANNUAL_RECAP_CRON,
+        context_mode: 'isolated',
+        next_run: nextCronRun(ANNUAL_RECAP_CRON),
+        status: 'active',
+        created_at: now,
+      });
+      logger.info(
+        { groupFolder: group.folder, taskId: annualId },
+        'Registered annual recap task',
       );
     }
   }
@@ -163,6 +241,56 @@ Weekly recap format:
 
 If fewer than 3 daily notes exist for this week, synthesize from whatever is available.
 If no daily notes exist, write: "# Weekly Recap — YYYY-Wnn\\n\\nNo daily notes available for this week."
+
+Do NOT send any message to the chat. This task runs silently.`;
+}
+
+function buildMonthlyRecapPrompt(groupFolder: string): string {
+  return `You are running as an isolated recap agent for group "${groupFolder}".
+
+Your job: Generate a monthly memory recap, then clean up old archived conversation files.
+
+Instructions:
+1. Determine the current month in ISO format: YYYY-MM (e.g. "2026-03" for March 2026).
+2. Import generateMonthlyRecap from src/recap-generator.ts.
+   Call it: generateMonthlyRecap({ groupFolder: "${groupFolder}", chatJid: context.chatJid, monthIso: "YYYY-MM" })
+3. Log the result (e.g. "Monthly recap written: {result.path}").
+4. After the monthly recap is confirmed written, import deleteOldArchives from src/conversation-archiver.ts.
+   Call it: deleteOldArchives({ groupFolder: "${groupFolder}" })
+5. Log: "Archive cleanup: deleted {result.deleted.length} files, skipped {result.skipped.length} files"
+6. Handle errors gracefully — if generateMonthlyRecap or deleteOldArchives throws, log the error and continue. Do not propagate the error.
+
+Do NOT send any message to the chat. This task runs silently.`;
+}
+
+function buildSemesterRecapPrompt(groupFolder: string): string {
+  return `You are running as an isolated recap agent for group "${groupFolder}".
+
+Your job: Generate a semester memory recap.
+
+Instructions:
+1. Determine the current semester based on the current month:
+   - January–June → "YYYY-S1" (e.g. "2026-S1")
+   - July–December → "YYYY-S2" (e.g. "2026-S2")
+2. Import generateSemesterRecap from src/recap-generator.ts.
+   Call it: generateSemesterRecap({ groupFolder: "${groupFolder}", chatJid: context.chatJid, semesterIso: "YYYY-S1" })
+3. Log the result (e.g. "Semester recap written: {result.path}").
+4. Handle errors gracefully — log and continue if it throws.
+
+Do NOT send any message to the chat. This task runs silently.`;
+}
+
+function buildAnnualRecapPrompt(groupFolder: string): string {
+  return `You are running as an isolated recap agent for group "${groupFolder}".
+
+Your job: Generate an annual memory recap.
+
+Instructions:
+1. Determine the current year as a number (e.g. 2026).
+2. Import generateAnnualRecap from src/recap-generator.ts.
+   Call it: generateAnnualRecap({ groupFolder: "${groupFolder}", chatJid: context.chatJid, year: 2026 })
+3. Log the result (e.g. "Annual recap written: {result.path}").
+4. Handle errors gracefully — log and continue if it throws.
 
 Do NOT send any message to the chat. This task runs silently.`;
 }
