@@ -149,7 +149,7 @@ async function runTask(
         assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) =>
-        deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+        deps.onProcess(taskQueueJid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
@@ -240,7 +240,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
           continue;
         }
 
-        deps.queue.enqueueTask(currentTask.chat_jid, currentTask.id, () =>
+        deps.queue.enqueueTask(`task:${currentTask.chat_jid}`, currentTask.id, () =>
           runTask(currentTask, deps),
         );
       }
