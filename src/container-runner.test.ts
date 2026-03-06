@@ -227,6 +227,70 @@ describe('container-runner timeout behavior', () => {
   });
 });
 
+describe('ContainerInput.semanticContext — stdin JSON serialization', () => {
+  beforeEach(() => {
+    fakeProc = createFakeProcess();
+  });
+
+  it('semanticContext present in ContainerInput is serialized into stdin JSON', async () => {
+    const stdinChunks: Buffer[] = [];
+    fakeProc.stdin.on('data', (chunk: Buffer) => stdinChunks.push(chunk));
+
+    const inputWithContext = {
+      prompt: 'What did we discuss last week?',
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      isMain: false,
+      semanticContext: '## Semantic Memory (Query-Relevant)\n\n### [fact] notes.md\n\nSome relevant note content',
+    };
+
+    const resultPromise = runContainerAgent(testGroup, inputWithContext, () => {}, vi.fn(async () => {}));
+
+    // Let stdin write happen (it's synchronous after spawn)
+    await Promise.resolve();
+
+    // Trigger container exit so the promise resolves
+    emitOutputMarker(fakeProc, { status: 'success', result: 'ok', newSessionId: undefined });
+    fakeProc.emit('close', 0);
+
+    await resultPromise;
+
+    const stdinData = Buffer.concat(stdinChunks).toString('utf-8');
+    const parsed = JSON.parse(stdinData) as Record<string, unknown>;
+
+    expect(parsed['semanticContext']).toBe(
+      '## Semantic Memory (Query-Relevant)\n\n### [fact] notes.md\n\nSome relevant note content',
+    );
+  });
+
+  it('semanticContext absent from ContainerInput is not present in stdin JSON', async () => {
+    const stdinChunks: Buffer[] = [];
+    fakeProc.stdin.on('data', (chunk: Buffer) => stdinChunks.push(chunk));
+
+    const inputWithoutContext = {
+      prompt: 'Hello',
+      groupFolder: 'test-group',
+      chatJid: 'test@g.us',
+      isMain: false,
+      // semanticContext intentionally omitted
+    };
+
+    const resultPromise = runContainerAgent(testGroup, inputWithoutContext, () => {}, vi.fn(async () => {}));
+
+    await Promise.resolve();
+
+    emitOutputMarker(fakeProc, { status: 'success', result: 'ok', newSessionId: undefined });
+    fakeProc.emit('close', 0);
+
+    await resultPromise;
+
+    const stdinData = Buffer.concat(stdinChunks).toString('utf-8');
+    const parsed = JSON.parse(stdinData) as Record<string, unknown>;
+
+    expect('semanticContext' in parsed).toBe(false);
+  });
+});
+
 describe('readSecrets — .env token validation', () => {
   beforeEach(() => {
     mockEnvFileResult = {};
