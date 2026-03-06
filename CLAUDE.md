@@ -72,9 +72,7 @@ if (prompt.toLowerCase().includes('/mycommand')) { ...; return; }
 
 **Telegram command names**: only `[a-z0-9_]` — no hyphens. Use underscores.
 
-**To add to `/help` reply**: edit the string in `this.bot.command('help', ...)`.
-
-**To register in Telegram's "/" menu**: add to `setMyCommands()` array (called in `connect()` before `bot.start()`).
+**To register in Telegram's "/" menu**: add to `setMyCommands()` array (called in `connect()` before `bot.start()`). Keep the list sorted alphabetically.
 
 ## Container Build Cache
 
