@@ -15,8 +15,9 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 import { loadMemoryContext } from './memory-loader.js';
 import { introspectMemory, formatIntrospectReport, searchMemory } from './introspect-memory.js';
@@ -71,6 +72,7 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -154,48 +156,51 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
 }
 
 /**
- * Archive the full transcript to conversations/ before compaction.
+ * Compute the transcript JSONL path for a given session ID.
+ * Mirrors the SDK's internal p$(sessionId) calculation:
+ *   path.join(configDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`)
+ * The SDK cwd is always '/workspace/group' (set via options.cwd in runQuery).
  */
-function createPreCompactHook(assistantName?: string): HookCallback {
-  return async (input, _toolUseId, _context) => {
-    const preCompact = input as PreCompactHookInput;
-    const transcriptPath = preCompact.transcript_path;
-    const sessionId = preCompact.session_id;
+function getTranscriptPath(sessionId: string): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
+  const projectDirName = '/workspace/group'.replace(/[^a-zA-Z0-9]/g, '-');
+  return path.join(configDir, 'projects', projectDirName, `${sessionId}.jsonl`);
+}
 
-    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
-      log('No transcript found for archiving');
-      return {};
-    }
+/**
+ * Save the full conversation transcript to conversations/ on container exit.
+ * Uses only synchronous fs APIs — safe to call from SIGTERM handler.
+ */
+function saveConversationOnExit(
+  transcriptPath: string,
+  sessionId: string,
+  assistantName?: string,
+): void {
+  try {
+    if (!fs.existsSync(transcriptPath)) return;
 
-    try {
-      const content = fs.readFileSync(transcriptPath, 'utf-8');
-      const messages = parseTranscript(content);
+    const content = fs.readFileSync(transcriptPath, 'utf-8');
+    const messages = parseTranscript(content);
+    if (messages.length === 0) return; // guard: empty transcript (/memory sessions)
 
-      if (messages.length === 0) {
-        log('No messages to archive');
-        return {};
-      }
+    const summary = getSessionSummary(sessionId, transcriptPath);
+    const name = summary ? sanitizeFilename(summary) : generateFallbackName();
+    const conversationsDir = '/workspace/group/conversations';
+    fs.mkdirSync(conversationsDir, { recursive: true });
 
-      const summary = getSessionSummary(sessionId, transcriptPath);
-      const name = summary ? sanitizeFilename(summary) : generateFallbackName();
+    const date = new Date().toISOString().split('T')[0];
+    const filename = `${date}-${name}.md`;
+    const filePath = path.join(conversationsDir, filename);
+    const tmpPath = filePath + '.tmp';
 
-      const conversationsDir = '/workspace/group/conversations';
-      fs.mkdirSync(conversationsDir, { recursive: true });
-
-      const date = new Date().toISOString().split('T')[0];
-      const filename = `${date}-${name}.md`;
-      const filePath = path.join(conversationsDir, filename);
-
-      const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
-      fs.writeFileSync(filePath, markdown);
-
-      log(`Archived conversation to ${filePath}`);
-    } catch (err) {
-      log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    return {};
-  };
+    const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
+    fs.writeFileSync(tmpPath, markdown);
+    fs.renameSync(tmpPath, filePath);
+    log(`Saved conversation on exit: ${filePath}`);
+  } catch (err) {
+    log(`Exit save failed: ${err instanceof Error ? err.message : String(err)}`);
+    // Never throw — container must exit cleanly
+  }
 }
 
 // Secrets to strip from Bash tool subprocess environments.
@@ -515,7 +520,6 @@ async function runQuery(
         },
       },
       hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
         PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
       },
     }
@@ -648,6 +652,17 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+
+  // SIGTERM handler: safety net for docker stop mid-conversation.
+  // saveConversationOnExit uses only synchronous fs APIs — safe inside signal handler.
+  // sessionId is captured by reference — updated inside the loop as queries complete.
+  process.on('SIGTERM', () => {
+    if (sessionId) {
+      saveConversationOnExit(getTranscriptPath(sessionId), sessionId, containerInput.assistantName);
+    }
+    process.exit(0);
+  });
+
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
@@ -715,6 +730,14 @@ async function main(): Promise<void> {
       }
 
       prompt = nextMessage;
+    }
+
+    // Save conversation on normal exit (both sentinel exit paths).
+    // getTranscriptPath() computes the SDK's internal JSONL path from the sessionId.
+    // The /memory early-return exits before this loop, so sessionId stays as the
+    // initial value (possibly undefined) — the guard prevents any call (correct behavior).
+    if (sessionId) {
+      saveConversationOnExit(getTranscriptPath(sessionId), sessionId, containerInput.assistantName);
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
