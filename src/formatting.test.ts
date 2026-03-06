@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from './config.js';
+import { markdownToTelegramHtml } from './markdown-to-telegram.js';
 import {
   escapeXml,
   formatMessages,
@@ -233,5 +234,40 @@ describe('trigger gating (requiresTrigger interaction)', () => {
   it('non-main group with requiresTrigger=false always processes (no trigger needed)', () => {
     const msgs = [makeMsg({ content: 'hello no trigger' })];
     expect(shouldProcess(false, false, msgs)).toBe(true);
+  });
+});
+
+// --- markdownToTelegramHtml — nested lists ---
+
+describe('markdownToTelegramHtml — nested lists', () => {
+  it('renders tight 3-level nested list at all depths', () => {
+    const input = '- a\n  - b\n    - c';
+    const result = markdownToTelegramHtml(input);
+    expect(result).toContain('• a');
+    expect(result).toContain('• b');
+    expect(result).toContain('• c');
+    expect(result).not.toContain('<p>');
+  });
+
+  it('renders loose list without <p> tags', () => {
+    const input = '- top\n\n- second';
+    const result = markdownToTelegramHtml(input);
+    expect(result).not.toContain('<p>');
+    expect(result).toContain('• top');
+    expect(result).toContain('• second');
+  });
+
+  it('renders ordered and unordered lists at same nesting level', () => {
+    const input = '1. first\n   - nested bullet';
+    const result = markdownToTelegramHtml(input);
+    expect(result).toContain('1. first');
+    expect(result).toContain('• nested bullet');
+  });
+
+  it('sequential calls start list indentation at depth 0 (singleton state check)', () => {
+    const input = '- a\n  - b';
+    markdownToTelegramHtml(input);
+    const result = markdownToTelegramHtml('- x');
+    expect(result.trimStart()).toMatch(/^• x/);
   });
 });
