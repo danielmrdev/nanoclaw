@@ -8,6 +8,54 @@ import { Marked, Renderer } from 'marked';
  * Everything else degrades gracefully to plain text.
  */
 
+interface ListToken {
+  ordered: boolean;
+  start: number | '';
+  items: Array<{ tokens: import('marked').Token[] }>;
+}
+
+function renderList(
+  token: ListToken,
+  depth: number,
+  parser: { parseInline: (tokens: import('marked').Token[]) => string },
+): string {
+  if (depth > 5) return '';
+  const indent = '  '.repeat(depth);
+  const lines: string[] = [];
+
+  token.items.forEach((item, i) => {
+    const prefix = token.ordered ? `${(token.start as number) + i}.` : '•';
+    const first = item.tokens[0];
+
+    let inner: string;
+    if (
+      first?.type === 'text' &&
+      'tokens' in first &&
+      (first as { tokens?: import('marked').Token[] }).tokens
+    ) {
+      inner = parser.parseInline(
+        (first as { tokens: import('marked').Token[] }).tokens,
+      );
+    } else if (first?.type === 'paragraph' && 'tokens' in first) {
+      inner = parser.parseInline(
+        (first as { tokens: import('marked').Token[] }).tokens,
+      );
+    } else {
+      inner = parser.parseInline(item.tokens);
+    }
+
+    lines.push(`${indent}${prefix} ${inner}`);
+
+    for (const t of item.tokens.slice(1)) {
+      if (t.type === 'list') {
+        lines.push(renderList(t as unknown as ListToken, depth + 1, parser));
+      }
+    }
+  });
+
+  return lines.join('\n');
+}
+
 function buildRenderer(): Renderer {
   const renderer = new Renderer();
 
@@ -49,19 +97,7 @@ function buildRenderer(): Renderer {
   };
 
   renderer.list = function (token) {
-    const items = token.items.map((item, i) => {
-      // Use parseInline on the first text token's children to avoid block-level
-      // wrapping (<p> tags) inside list items.
-      const first = item.tokens[0];
-      const inner =
-        first?.type === 'text' && 'tokens' in first && first.tokens
-          ? this.parser.parseInline(first.tokens)
-          : this.parser.parse(item.tokens).trim();
-
-      const prefix = token.ordered ? `${(token.start as number) + i}.` : '•';
-      return `${prefix} ${inner}`;
-    });
-    return `${items.join('\n')}\n\n`;
+    return renderList(token as unknown as ListToken, 0, this.parser) + '\n\n';
   };
 
   renderer.hr = function () {
@@ -80,7 +116,11 @@ function buildRenderer(): Renderer {
 }
 
 // Single instance — renderer is set once, not on every parse call
-const markedInstance = new Marked({ renderer: buildRenderer(), gfm: true, breaks: false });
+const markedInstance = new Marked({
+  renderer: buildRenderer(),
+  gfm: true,
+  breaks: false,
+});
 
 export function markdownToTelegramHtml(text: string): string {
   const html = markedInstance.parse(text) as string;
@@ -88,8 +128,5 @@ export function markdownToTelegramHtml(text: string): string {
 }
 
 function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
