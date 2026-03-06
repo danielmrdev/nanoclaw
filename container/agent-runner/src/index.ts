@@ -178,14 +178,11 @@ function saveConversationOnExit(
   startOffset = 0,
 ): void {
   try {
-    log(`[exit-save] transcriptPath=${transcriptPath} exists=${fs.existsSync(transcriptPath)} startOffset=${startOffset} sessionId=${sessionId}`);
     if (!fs.existsSync(transcriptPath)) return;
 
     const buf = fs.readFileSync(transcriptPath);
-    log(`[exit-save] fileSize=${buf.length} sliceSize=${buf.length - startOffset}`);
     const content = buf.subarray(startOffset).toString('utf-8');
     const messages = parseTranscript(content);
-    log(`[exit-save] messages=${messages.length}`);
     if (messages.length === 0) return; // guard: empty transcript (/memory sessions)
 
     const summary = getSessionSummary(sessionId, transcriptPath);
