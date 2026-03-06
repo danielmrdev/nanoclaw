@@ -18,6 +18,24 @@ vi.mock('../logger.js', () => ({
   },
 }));
 
+// Mock semantic-retrieval
+const mockHybridSearch = vi.fn();
+vi.mock('../semantic-retrieval.js', () => ({
+  hybridSearch: (...args: any[]) => mockHybridSearch(...args),
+}));
+
+// Mock indexing-backfill
+const mockBackfillGroupEmbeddings = vi.fn();
+vi.mock('../indexing-backfill.js', () => ({
+  backfillGroupEmbeddings: (...args: any[]) => mockBackfillGroupEmbeddings(...args),
+}));
+
+// Mock db — isSemanticsEnabled
+const mockIsSemanticsEnabled = vi.fn(() => true);
+vi.mock('../db.js', () => ({
+  isSemanticsEnabled: () => mockIsSemanticsEnabled(),
+}));
+
 // --- Grammy mock ---
 
 type Handler = (...args: any[]) => any;
@@ -34,6 +52,7 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
+      setMyCommands: vi.fn().mockResolvedValue(undefined),
     };
 
     constructor(token: string) {
@@ -914,6 +933,240 @@ describe('TelegramChannel', () => {
       await handler(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith('Andy is online.');
+    });
+  });
+
+  // --- /search command ---
+
+  describe('/search command', () => {
+    it('/search with query calls hybridSearch and replies with formatted results', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockIsSemanticsEnabled.mockReturnValue(true);
+      mockHybridSearch.mockResolvedValue([
+        { sourceType: 'daily', sourcePath: 'daily/2025-01/2025-01-15.md', distance: 0.2, via: 'knn' },
+      ]);
+
+      const handler = currentBot().commandHandlers.get('search')!;
+      const ctx = {
+        chat: { id: 100200300 },
+        message: { text: '/search trabajo' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      expect(mockHybridSearch).toHaveBeenCalledWith('test-group', 'trabajo');
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining('trabajo'),
+        { parse_mode: 'HTML' },
+      );
+    });
+
+    it('/search with no query replies with usage hint without crashing', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockIsSemanticsEnabled.mockReturnValue(true);
+
+      const handler = currentBot().commandHandlers.get('search')!;
+      const ctx = {
+        chat: { id: 100200300 },
+        message: { text: '/search' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      expect(mockHybridSearch).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith('Uso: /search <consulta>');
+    });
+
+    it('/search returns "No se encontraron resultados" when hybridSearch returns empty array', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockIsSemanticsEnabled.mockReturnValue(true);
+      mockHybridSearch.mockResolvedValue([]);
+
+      const handler = currentBot().commandHandlers.get('search')!;
+      const ctx = {
+        chat: { id: 100200300 },
+        message: { text: '/search trabajo' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining('No se encontraron resultados'),
+        { parse_mode: 'HTML' },
+      );
+    });
+
+    it('/search when isSemanticsEnabled is false sends unavailable message', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockIsSemanticsEnabled.mockReturnValue(false);
+
+      const handler = currentBot().commandHandlers.get('search')!;
+      const ctx = {
+        chat: { id: 100200300 },
+        message: { text: '/search trabajo' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      expect(mockHybridSearch).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining('no disponible'),
+      );
+    });
+  });
+
+  // --- formatSearchResults (via /search) ---
+
+  describe('formatSearchResults via /search reply content', () => {
+    it('KNN result shows sourceType, date derived from path, and percentage score', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockIsSemanticsEnabled.mockReturnValue(true);
+      mockHybridSearch.mockResolvedValue([
+        { sourceType: 'daily', sourcePath: 'daily/2025-01/2025-01-15.md', distance: 0.2, via: 'knn' },
+      ]);
+
+      const handler = currentBot().commandHandlers.get('search')!;
+      const ctx = {
+        chat: { id: 100200300 },
+        message: { text: '/search trabajo' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      const replyArg: string = ctx.reply.mock.calls[0][0];
+      // sourceType visible in reply
+      expect(replyArg).toContain('daily');
+      // date: basename without .md
+      expect(replyArg).toContain('2025-01-15');
+      // score: (1 - 0.2) * 100 = 80%
+      expect(replyArg).toContain('80%');
+    });
+
+    it('FTS5 result (distance undefined) shows "keyword" label', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockIsSemanticsEnabled.mockReturnValue(true);
+      mockHybridSearch.mockResolvedValue([
+        { sourceType: 'fact', sourcePath: 'knowledge/habits.md', via: 'fts5' },
+      ]);
+
+      const handler = currentBot().commandHandlers.get('search')!;
+      const ctx = {
+        chat: { id: 100200300 },
+        message: { text: '/search habits' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      const replyArg: string = ctx.reply.mock.calls[0][0];
+      expect(replyArg).toContain('keyword');
+    });
+
+    it('multiple results are all listed in reply', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockIsSemanticsEnabled.mockReturnValue(true);
+      mockHybridSearch.mockResolvedValue([
+        { sourceType: 'daily', sourcePath: 'daily/2025-01/2025-01-10.md', distance: 0.1, via: 'knn' },
+        { sourceType: 'fact', sourcePath: 'knowledge/work.md', via: 'fts5' },
+        { sourceType: 'daily', sourcePath: 'daily/2025-02/2025-02-01.md', distance: 0.3, via: 'knn' },
+      ]);
+
+      const handler = currentBot().commandHandlers.get('search')!;
+      const ctx = {
+        chat: { id: 100200300 },
+        message: { text: '/search trabajo' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      const replyArg: string = ctx.reply.mock.calls[0][0];
+      expect(replyArg).toContain('2025-01-10');
+      expect(replyArg).toContain('work');
+      expect(replyArg).toContain('2025-02-01');
+      // "3 resultado(s)" visible
+      expect(replyArg).toContain('3');
+    });
+  });
+
+  // --- /reindex command ---
+
+  describe('/reindex command', () => {
+    it('/reindex sends ack reply first, then calls backfillGroupEmbeddings, then sends count reply', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockIsSemanticsEnabled.mockReturnValue(true);
+      mockBackfillGroupEmbeddings.mockResolvedValue({ indexed: 5, skipped: 2, failed: 0 });
+
+      const handler = currentBot().commandHandlers.get('reindex')!;
+      const ctx = {
+        chat: { id: 100200300 },
+        message: { text: '/reindex' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      // First reply is the ack
+      expect(ctx.reply).toHaveBeenNthCalledWith(1, expect.stringContaining('Indexando'));
+      // backfill was called with the group folder
+      expect(mockBackfillGroupEmbeddings).toHaveBeenCalledWith('test-group');
+      // Second reply contains the counts
+      expect(ctx.reply).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('5'),
+      );
+      expect(ctx.reply.mock.calls[1][0]).toContain('2');
+    });
+
+    it('/reindex when isSemanticsEnabled returns false sends unavailable message', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockIsSemanticsEnabled.mockReturnValue(false);
+
+      const handler = currentBot().commandHandlers.get('reindex')!;
+      const ctx = {
+        chat: { id: 100200300 },
+        message: { text: '/reindex' },
+        reply: vi.fn(),
+      };
+
+      await handler(ctx);
+
+      expect(mockBackfillGroupEmbeddings).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining('no disponible'),
+      );
     });
   });
 
