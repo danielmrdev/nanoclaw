@@ -358,6 +358,32 @@ ${systemStatusBody}`;
       }
     });
 
+    // Handle /reindex directly without a container (0 tokens, calls backfillGroupEmbeddings on host)
+    this.bot.command('reindex', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group || !ctx.message) return;
+
+      if (!isSemanticsEnabled()) {
+        await ctx.reply('Indexado semántico no disponible (sqlite-vec no cargado).');
+        return;
+      }
+
+      // Ack first — backfill can take seconds for large groups
+      await ctx.reply('Indexando memoria del grupo...');
+
+      try {
+        const result = await backfillGroupEmbeddings(group.folder);
+        await ctx.reply(
+          `Reindexado completo.\n` +
+            `Indexados: ${result.indexed} · Omitidos: ${result.skipped} · Errores: ${result.failed}`,
+        );
+      } catch (err) {
+        logger.error({ err }, 'Reindex command failed');
+        await ctx.reply('Error durante el reindexado.');
+      }
+    });
+
     this.bot.on('message:text', async (ctx) => {
       // Skip commands
       if (ctx.message.text.startsWith('/')) return;
@@ -482,7 +508,9 @@ ${systemStatusBody}`;
       { command: 'chatid',  description: 'Get this chat registration ID' },
       { command: 'memory',  description: 'Show memory state' },
       { command: 'ping',    description: 'Check if the bot is online' },
+      { command: 'reindex', description: 'Re-index group memory (semantic search)' },
       { command: 'restart', description: 'Restart NanoClaw' },
+      { command: 'search',  description: 'Search group memory semantically' },
       { command: 'status',  description: 'System status report' },
       { command: 'version', description: 'Show NanoClaw version' },
     ]);
