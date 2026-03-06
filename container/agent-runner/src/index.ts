@@ -175,11 +175,13 @@ function saveConversationOnExit(
   transcriptPath: string,
   sessionId: string,
   assistantName?: string,
+  startOffset = 0,
 ): void {
   try {
     if (!fs.existsSync(transcriptPath)) return;
 
-    const content = fs.readFileSync(transcriptPath, 'utf-8');
+    const buf = fs.readFileSync(transcriptPath);
+    const content = buf.subarray(startOffset).toString('utf-8');
     const messages = parseTranscript(content);
     if (messages.length === 0) return; // guard: empty transcript (/memory sessions)
 
@@ -653,12 +655,22 @@ async function main(): Promise<void> {
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
 
+  // Record transcript byte offset at session start so saveConversationOnExit()
+  // writes only messages from the current run (the JSONL accumulates across resumed sessions).
+  let transcriptStartOffset = 0;
+  if (sessionId) {
+    const initialPath = getTranscriptPath(sessionId);
+    if (fs.existsSync(initialPath)) {
+      transcriptStartOffset = fs.statSync(initialPath).size;
+    }
+  }
+
   // SIGTERM handler: safety net for docker stop mid-conversation.
   // saveConversationOnExit uses only synchronous fs APIs — safe inside signal handler.
   // sessionId is captured by reference — updated inside the loop as queries complete.
   process.on('SIGTERM', () => {
     if (sessionId) {
-      saveConversationOnExit(getTranscriptPath(sessionId), sessionId, containerInput.assistantName);
+      saveConversationOnExit(getTranscriptPath(sessionId), sessionId, containerInput.assistantName, transcriptStartOffset);
     }
     process.exit(0);
   });
@@ -737,7 +749,7 @@ async function main(): Promise<void> {
     // The /memory early-return exits before this loop, so sessionId stays as the
     // initial value (possibly undefined) — the guard prevents any call (correct behavior).
     if (sessionId) {
-      saveConversationOnExit(getTranscriptPath(sessionId), sessionId, containerInput.assistantName);
+      saveConversationOnExit(getTranscriptPath(sessionId), sessionId, containerInput.assistantName, transcriptStartOffset);
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
