@@ -339,6 +339,11 @@ ${systemStatusBody}`;
       const group = this.opts.registeredGroups()[chatJid];
       if (!group || !ctx.message) return;
 
+      if (!isSemanticsEnabled()) {
+        await ctx.reply('Búsqueda semántica no disponible (sqlite-vec no cargado).');
+        return;
+      }
+
       const query = ctx.message.text
         .replace(/^\/search(?:@\S+)?\s*/i, '')
         .trim();
