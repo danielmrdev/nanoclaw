@@ -28,18 +28,13 @@ function renderList(
     const first = item.tokens[0];
 
     let inner: string;
-    if (
-      first?.type === 'text' &&
-      'tokens' in first &&
-      (first as { tokens?: import('marked').Token[] }).tokens
-    ) {
-      inner = parser.parseInline(
-        (first as { tokens: import('marked').Token[] }).tokens,
-      );
-    } else if (first?.type === 'paragraph' && 'tokens' in first) {
-      inner = parser.parseInline(
-        (first as { tokens: import('marked').Token[] }).tokens,
-      );
+    const firstWithTokens =
+      (first?.type === 'text' || first?.type === 'paragraph') &&
+      'tokens' in first
+        ? (first as { tokens?: import('marked').Token[] }).tokens
+        : undefined;
+    if (firstWithTokens) {
+      inner = parser.parseInline(firstWithTokens);
     } else {
       inner = parser.parseInline(item.tokens);
     }
