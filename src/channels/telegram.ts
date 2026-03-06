@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import { execSync } from 'child_process';
 import { createRequire } from 'module';
 
@@ -7,6 +8,7 @@ import { Bot, Api } from 'grammy';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { markdownToTelegramHtml } from '../markdown-to-telegram.js';
 import { logger } from '../logger.js';
+import { resolveGroupFolderPath } from '../group-folder.js';
 import {
   Channel,
   OnChatMetadata,
@@ -89,6 +91,90 @@ function splitHtmlIntelligently(html: string, maxLength: number): string[] {
   return chunks.length > 0 ? chunks : [html];
 }
 
+function buildMemoryReport(groupPath: string): string {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+  const lines: string[] = [`## Estado de Memoria — ${dateStr}`, ''];
+
+  // Knowledge: scan subdirectories (categories contain the .md files)
+  const knowledgeDir = path.join(groupPath, 'knowledge');
+  const categories: Array<{ name: string; files: string[] }> = [];
+  let totalKnowledgeFiles = 0;
+  try {
+    if (fs.existsSync(knowledgeDir)) {
+      for (const entry of fs.readdirSync(knowledgeDir).sort()) {
+        const entryPath = path.join(knowledgeDir, entry);
+        try {
+          if (fs.statSync(entryPath).isDirectory()) {
+            const files = fs.readdirSync(entryPath).filter((f) => f.endsWith('.md')).map((f) => f.replace(/\.md$/, '')).sort();
+            if (files.length > 0) {
+              categories.push({ name: entry, files });
+              totalKnowledgeFiles += files.length;
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    }
+  } catch { /* ignore */ }
+  lines.push(`**Knowledge Base** (${totalKnowledgeFiles} archivos, ${categories.length} categorías):`);
+  if (categories.length > 0) {
+    for (const cat of categories) lines.push(`- ${cat.name} (${cat.files.length}): ${cat.files.join(', ')}`);
+  } else {
+    lines.push('- (vacío)');
+  }
+  lines.push('');
+
+  // Daily notes
+  const dailyDir = path.join(groupPath, 'daily');
+  const allDates: string[] = [];
+  try {
+    if (fs.existsSync(dailyDir)) {
+      for (const entry of fs.readdirSync(dailyDir)) {
+        if (!/^\d{4}-\d{2}$/.test(entry)) continue;
+        const monthDir = path.join(dailyDir, entry);
+        try {
+          if (!fs.statSync(monthDir).isDirectory()) continue;
+          for (const file of fs.readdirSync(monthDir)) {
+            if (file.endsWith('.md')) allDates.push(file.replace(/\.md$/, ''));
+          }
+        } catch { /* ignore */ }
+      }
+    }
+  } catch { /* ignore */ }
+  const sortedDates = allDates.sort((a, b) => b.localeCompare(a));
+  const recentDates = sortedDates.slice(0, 7);
+  const lastDate = recentDates[0] ?? null;
+
+  // Detect gap between last note and today
+  let gapNote = '';
+  if (lastDate) {
+    const last = new Date(lastDate + 'T00:00:00');
+    const today = new Date(now.toISOString().split('T')[0] + 'T00:00:00');
+    const diffDays = Math.round((today.getTime() - last.getTime()) / 86400000);
+    if (diffDays > 1) gapNote = ` ⚠️ ${diffDays - 1} días sin nota`;
+  }
+
+  lines.push(`**Daily Notes**${gapNote}:`);
+  if (recentDates.length > 0) {
+    lines.push(`- Últimas: ${recentDates.join(', ')}`);
+  } else {
+    lines.push('- (ninguna)');
+  }
+  lines.push('');
+
+  // Conversations
+  const conversationsDir = path.join(groupPath, 'conversations');
+  let convCount = 0;
+  try {
+    if (fs.existsSync(conversationsDir)) {
+      convCount = fs.readdirSync(conversationsDir).filter((f) => f.endsWith('.md')).length;
+    }
+  } catch { /* ignore */ }
+  lines.push(`**Conversaciones archivadas**: ${convCount}`);
+
+  return lines.join('\n');
+}
+
 export class TelegramChannel implements Channel {
   name = 'telegram';
 
@@ -127,7 +213,8 @@ export class TelegramChannel implements Channel {
         `/version — Show NanoClaw version\n` +
         `/status — System status report\n` +
         `/restart — Restart NanoClaw\n` +
-        `/chatid — Get this chat's registration ID`,
+        `/chatid — Get this chat's registration ID\n` +
+        `/memory — Show memory state (knowledge, daily notes, conversations)`,
       );
     });
 
@@ -219,6 +306,22 @@ ${systemStatusBody}`;
       logger.info('Service restart initiated via /restart command');
       // launchctl (KeepAlive: true) will restart the process automatically
       setTimeout(() => process.kill(process.pid, 'SIGTERM'), 500);
+    });
+
+    // Handle /memory directly without a container (0 tokens, reads filesystem)
+    this.bot.command('memory', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group || !ctx.message) return;
+      try {
+        const groupPath = resolveGroupFolderPath(group.folder);
+        const report = buildMemoryReport(groupPath);
+        const html = markdownToTelegramHtml(report);
+        await ctx.reply(html, { parse_mode: 'HTML' });
+      } catch (err) {
+        logger.error({ err }, 'Failed to build memory report');
+        await ctx.reply('Error reading memory state.');
+      }
     });
 
     this.bot.on('message:text', async (ctx) => {
@@ -339,6 +442,17 @@ ${systemStatusBody}`;
     this.bot.catch((err) => {
       logger.error({ err: err.message }, 'Telegram bot error');
     });
+
+    // Register bot commands in Telegram (shows in the "/" menu)
+    await this.bot.api.setMyCommands([
+      { command: 'help',    description: 'Show available commands' },
+      { command: 'ping',    description: 'Check if the bot is online' },
+      { command: 'version', description: 'Show NanoClaw version' },
+      { command: 'status',  description: 'System status report' },
+      { command: 'restart', description: 'Restart NanoClaw' },
+      { command: 'chatid',  description: 'Get this chat registration ID' },
+      { command: 'memory',  description: 'Show memory state' },
+    ]);
 
     // Start polling — returns a Promise that resolves when started
     return new Promise<void>((resolve) => {

@@ -45,6 +45,37 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
 ```
 
+## Telegram Bot Commands
+
+Commands are handled in `src/channels/telegram.ts`. There are two types:
+
+**Direct handlers** (respond instantly without container, e.g. `/ping`, `/status`):
+```typescript
+this.bot.command('mycommand', (ctx) => { ctx.reply('...'); });
+```
+
+**Agent-routed commands** (need container/filesystem access, e.g. `/memory`):
+```typescript
+this.bot.command('mycommand', async (ctx) => {
+  const chatJid = `tg:${ctx.chat.id}`;
+  const group = this.opts.registeredGroups()[chatJid];
+  if (!group || !ctx.message) return;
+  this.opts.onMessage(chatJid, { ..., content: '/mycommand' });
+});
+```
+Then intercept in `container/agent-runner/src/index.ts` before the `while(true)` loop:
+```typescript
+if (prompt.toLowerCase().includes('/mycommand')) { ...; return; }
+```
+
+**Important**: The `message:text` handler has `if (ctx.message.text.startsWith('/')) return` — unregistered slash commands are silently dropped. Always register a `bot.command()` handler.
+
+**Telegram command names**: only `[a-z0-9_]` — no hyphens. Use underscores.
+
+**To add to `/help` reply**: edit the string in `this.bot.command('help', ...)`.
+
+**To register in Telegram's "/" menu**: add to `setMyCommands()` array (called in `connect()` before `bot.start()`).
+
 ## Container Build Cache
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.

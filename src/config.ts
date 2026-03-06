@@ -91,3 +91,23 @@ export const WEBSOCKET_FILES_PORT = parseInt(
   process.env.WEBSOCKET_FILES_PORT || envConfig.WEBSOCKET_FILES_PORT || '3002',
   10,
 );
+
+// Memory loading budget (tokens allocated to loading prior context at startup)
+// Adjust these values based on your agent's context window and needs
+export const MEMORY_CONTEXT_BUDGET = parseInt(
+  process.env.MEMORY_CONTEXT_BUDGET || '8000',
+  10,
+); // 8000 tokens default — ~32KB context
+
+// Per-layer token allocation as percentage of total budget
+// Layers load in priority order; unused allocation flows to next layer
+export const MEMORY_LAYER_ALLOCATION = {
+  tacit: 0.15, // 15% — behavior rules are non-negotiable
+  daily: 0.35, // 35% — recent context is highly relevant
+  conversation: 0.3, // 30% — continuity matters
+  knowledge: 0.2, // 20% — permanent facts fill remaining space
+};
+
+// If remaining context budget after memory loading < this threshold,
+// log a warning so operator knows memory is tight
+export const LOW_MEMORY_BUDGET_WARNING_PERCENT = 0.3; // 30% of context window

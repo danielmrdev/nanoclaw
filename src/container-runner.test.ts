@@ -2,9 +2,18 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 
+// readSecrets validation mocks — declared before module mocks so they can be mutated per-test
+let mockEnvFileResult: Record<string, string> = {};
+let mockKeychainResult: string | undefined = undefined;
+
 // Sentinel markers must match container-runner.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+
+// Mock env.js so readSecrets tests can control .env token
+vi.mock('./env.js', () => ({
+  readEnvFile: vi.fn(() => mockEnvFileResult),
+}));
 
 // Mock config
 vi.mock('./config.js', () => ({
@@ -70,7 +79,7 @@ function createFakeProcess() {
 
 let fakeProc: ReturnType<typeof createFakeProcess>;
 
-// Mock child_process.spawn
+// Mock child_process — execSync used by readKeychainToken, spawn used by runContainerAgent
 vi.mock('child_process', async () => {
   const actual =
     await vi.importActual<typeof import('child_process')>('child_process');
@@ -83,10 +92,19 @@ vi.mock('child_process', async () => {
         return new EventEmitter();
       },
     ),
+    execSync: vi.fn(() => {
+      if (mockKeychainResult !== undefined) {
+        // Return a valid Keystore JSON string
+        return JSON.stringify({
+          claudeAiOauth: { accessToken: mockKeychainResult },
+        });
+      }
+      throw new Error('Keystore not available');
+    }),
   };
 });
 
-import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import { runContainerAgent, readSecrets, ContainerOutput } from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -206,5 +224,40 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+});
+
+describe('readSecrets — .env token validation', () => {
+  beforeEach(() => {
+    mockEnvFileResult = {};
+    mockKeychainResult = undefined;
+  });
+
+  it('valid .env token passes through unchanged', () => {
+    mockEnvFileResult = { CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-validtoken123' };
+    mockKeychainResult = undefined;
+
+    const secrets = readSecrets();
+
+    expect(secrets['CLAUDE_CODE_OAUTH_TOKEN']).toBe('sk-ant-validtoken123');
+  });
+
+  it('.env token with wrong format (no sk-ant- prefix) is removed from secrets', () => {
+    mockEnvFileResult = { CLAUDE_CODE_OAUTH_TOKEN: 'bad-token-no-prefix' };
+    mockKeychainResult = undefined;
+
+    const secrets = readSecrets();
+
+    expect(secrets['CLAUDE_CODE_OAUTH_TOKEN']).toBeUndefined();
+  });
+
+  it('empty .env token is treated as absent and falls through to Keystore path', () => {
+    mockEnvFileResult = { CLAUDE_CODE_OAUTH_TOKEN: '   ' };
+    mockKeychainResult = 'sk-ant-fromkeystore';
+
+    const secrets = readSecrets();
+
+    // Empty token treated as absent → Keystore token used
+    expect(secrets['CLAUDE_CODE_OAUTH_TOKEN']).toBe('sk-ant-fromkeystore');
   });
 });

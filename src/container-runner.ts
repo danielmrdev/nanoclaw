@@ -152,7 +152,6 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -223,43 +222,13 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function readKeychainToken(): string | undefined {
-  try {
-    const json = execSync(
-      'security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null',
-      { encoding: 'utf8', timeout: 5000 },
-    ).trim();
-    if (!json) return undefined;
-    const creds = JSON.parse(json);
-    return creds?.claudeAiOauth?.accessToken || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Read allowed secrets from .env for passing to the container via stdin.
- * Secrets are never written to disk or mounted as files.
- */
-function readSecrets(): Record<string, string> {
-  const secrets = readEnvFile([
+export function readSecrets(): Record<string, string> {
+  return readEnvFile([
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
-    'GITHUB_TOKEN',
-    'BACKUP_PASSPHRASE',
-    'BACKUP_GDRIVE_FOLDER',
+    'ANTHROPIC_BASE_URL',
+    'ANTHROPIC_AUTH_TOKEN',
   ]);
-
-  // If not in .env, read from macOS keychain (stays in sync with ccswitch)
-  if (!secrets['CLAUDE_CODE_OAUTH_TOKEN']) {
-    const keychainToken = readKeychainToken();
-    if (keychainToken) {
-      logger.debug('Using CLAUDE_CODE_OAUTH_TOKEN from macOS keychain');
-      secrets['CLAUDE_CODE_OAUTH_TOKEN'] = keychainToken;
-    }
-  }
-
-  return secrets;
 }
 
 function buildContainerArgs(
