@@ -15,6 +15,9 @@ import {
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
+import { hybridSearch, SemanticResult } from '../semantic-retrieval.js';
+import { backfillGroupEmbeddings } from '../indexing-backfill.js';
+import { isSemanticsEnabled } from '../db.js';
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -175,6 +178,25 @@ function buildMemoryReport(groupPath: string): string {
   return lines.join('\n');
 }
 
+function formatSearchResults(query: string, results: SemanticResult[]): string {
+  if (results.length === 0) {
+    return `**Búsqueda: "${query}"**\n\nNo se encontraron resultados.`;
+  }
+  const lines: string[] = [
+    `**Búsqueda: "${query}"** — ${results.length} resultado(s)`,
+    '',
+  ];
+  for (const r of results) {
+    const date = path.basename(r.sourcePath, '.md');
+    const scoreStr =
+      r.distance !== undefined
+        ? `${((1 - r.distance) * 100).toFixed(0)}%`
+        : 'keyword';
+    lines.push(`- **${r.sourceType}** · \`${date}\` · ${scoreStr}`);
+  }
+  return lines.join('\n');
+}
+
 export class TelegramChannel implements Channel {
   name = 'telegram';
 
@@ -308,6 +330,31 @@ ${systemStatusBody}`;
       } catch (err) {
         logger.error({ err }, 'Failed to build memory report');
         await ctx.reply('Error reading memory state.');
+      }
+    });
+
+    // Handle /search directly without a container (0 tokens, calls hybridSearch on host)
+    this.bot.command('search', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group || !ctx.message) return;
+
+      const query = ctx.message.text
+        .replace(/^\/search(?:@\S+)?\s*/i, '')
+        .trim();
+      if (!query) {
+        await ctx.reply('Uso: /search <consulta>');
+        return;
+      }
+
+      try {
+        const results = await hybridSearch(group.folder, query);
+        const md = formatSearchResults(query, results);
+        const html = markdownToTelegramHtml(md);
+        await ctx.reply(html, { parse_mode: 'HTML' });
+      } catch (err) {
+        logger.error({ err }, 'Search command failed');
+        await ctx.reply('Error ejecutando la búsqueda.');
       }
     });
 
