@@ -4,6 +4,11 @@ set -euo pipefail
 # NanoClaw Backup Script
 # Creates encrypted backup of databases, groups, and config
 
+# Load .env for cron/scheduled task execution
+if [ -f "/workspace/project/.env" ]; then
+    export $(grep -v '^#' /workspace/project/.env | xargs)
+fi
+
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BACKUP_NAME="nanoclaw-backup-${TIMESTAMP}"
 TEMP_DIR="/tmp/${BACKUP_NAME}"
