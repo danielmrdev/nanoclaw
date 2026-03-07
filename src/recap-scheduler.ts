@@ -200,7 +200,7 @@ Instructions:
 3. Write the weekly recap to: groups/${groupFolder}/daily/weekly/YYYY-Wnn.md
    (use ISO week number, e.g. daily/weekly/2026-W10.md)
 4. Use atomic write: write to .tmp first, then rename.
-5. After writing, update last_recap_timestamp in SQLite for this group's weekly cadence.
+5. Do NOT attempt to update any database — this task runs in an isolated container without SQLite access.
 
 Weekly recap format:
 \`\`\`markdown
