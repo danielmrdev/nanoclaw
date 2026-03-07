@@ -86,6 +86,8 @@ export const TELEGRAM_BOT_POOL = (process.env.TELEGRAM_BOT_POOL || '')
 
 export const WEBSOCKET_ENABLED =
   (process.env.WEBSOCKET_ENABLED ?? envConfig.WEBSOCKET_ENABLED ?? 'true') !== 'false';
+export const WEBSOCKET_HOST =
+  process.env.WEBSOCKET_HOST || envConfig.WEBSOCKET_HOST || '127.0.0.1';
 export const WEBSOCKET_PORT = parseInt(
   process.env.WEBSOCKET_PORT || envConfig.WEBSOCKET_PORT || '3001',
   10,
