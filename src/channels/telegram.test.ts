@@ -42,6 +42,8 @@ type Handler = (...args: any[]) => any;
 
 const botRef = vi.hoisted(() => ({ current: null as any }));
 
+const mockApiInstances: any[] = [];
+
 vi.mock('grammy', () => ({
   Bot: class MockBot {
     token: string;
@@ -86,9 +88,19 @@ vi.mock('grammy', () => ({
 
     stop() {}
   },
+  Api: class MockApi {
+    token: string;
+    sendMessage = vi.fn().mockResolvedValue(undefined);
+    setMyName = vi.fn().mockResolvedValue(undefined);
+
+    constructor(token: string) {
+      this.token = token;
+      mockApiInstances.push(this);
+    }
+  },
 }));
 
-import { TelegramChannel, TelegramChannelOpts } from './telegram.js';
+import { TelegramChannel, TelegramChannelOpts, initBotPool, sendPoolMessage } from './telegram.js';
 
 // --- Test helpers ---
 
@@ -1177,5 +1189,114 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel('test-token', createTestOpts());
       expect(channel.name).toBe('telegram');
     });
+  });
+
+  // --- sendMessage error recovery ---
+
+  describe('sendMessage error recovery', () => {
+    it('sends plain-text error notification when api.sendMessage rejects', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      // First call rejects (simulating Telegram 400 on HTML)
+      currentBot().api.sendMessage.mockRejectedValueOnce(
+        new Error('Bad Request: can\'t parse entities'),
+      );
+
+      await channel.sendMessage('tg:100200300', 'Some **table** response');
+
+      // Second call should be the error notification — without parse_mode
+      expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(2);
+      const [, secondCallArgs] = currentBot().api.sendMessage.mock.calls;
+      // No parse_mode in the notification call
+      expect(secondCallArgs[2]).toBeUndefined();
+      // Message text contains user-facing error context
+      expect(secondCallArgs[1]).toContain('formato no soportado');
+    });
+
+    it('error notification includes chat ID as numeric string', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.sendMessage.mockRejectedValueOnce(new Error('400'));
+
+      await channel.sendMessage('tg:100200300', 'text');
+
+      const [, secondCallArgs] = currentBot().api.sendMessage.mock.calls;
+      expect(secondCallArgs[0]).toBe('100200300');
+    });
+
+    it('does not throw when the error notification itself fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      // Both the original send and the notification fail
+      currentBot().api.sendMessage
+        .mockRejectedValueOnce(new Error('Original failure'))
+        .mockRejectedValueOnce(new Error('Notification failure'));
+
+      // Must not throw
+      await expect(
+        channel.sendMessage('tg:100200300', 'text'),
+      ).resolves.toBeUndefined();
+    });
+  });
+});
+
+// --- sendPoolMessage error recovery ---
+
+describe('sendPoolMessage error recovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Clear the mockApiInstances array between tests
+    mockApiInstances.length = 0;
+  });
+
+  it('sends plain-text error notification when pool sendMessage rejects', async () => {
+    await initBotPool(['pool-token-1']);
+    const poolApi = mockApiInstances[mockApiInstances.length - 1];
+
+    // First send rejects (simulating Telegram 400)
+    poolApi.sendMessage.mockRejectedValueOnce(
+      new Error('Bad Request: can\'t parse entities'),
+    );
+
+    await sendPoolMessage('tg:100200300', 'Some **table** response', 'Alice', 'test-group');
+
+    // Should have been called twice: original + notification
+    expect(poolApi.sendMessage).toHaveBeenCalledTimes(2);
+    const calls = poolApi.sendMessage.mock.calls;
+    // Notification call has no parse_mode (3rd arg)
+    expect(calls[1][2]).toBeUndefined();
+    // Notification text contains user-facing error context
+    expect(calls[1][1]).toContain('formato no soportado');
+  });
+
+  it('pool error notification targets the correct chat ID', async () => {
+    await initBotPool(['pool-token-2']);
+    const poolApi = mockApiInstances[mockApiInstances.length - 1];
+
+    poolApi.sendMessage.mockRejectedValueOnce(new Error('400'));
+
+    await sendPoolMessage('tg:555666777', 'text', 'Bob', 'my-group');
+
+    const calls = poolApi.sendMessage.mock.calls;
+    expect(calls[1][0]).toBe('555666777');
+  });
+
+  it('does not throw when pool error notification itself fails', async () => {
+    await initBotPool(['pool-token-3']);
+    const poolApi = mockApiInstances[mockApiInstances.length - 1];
+
+    poolApi.sendMessage
+      .mockRejectedValueOnce(new Error('Original failure'))
+      .mockRejectedValueOnce(new Error('Notification failure'));
+
+    await expect(
+      sendPoolMessage('tg:100200300', 'text', 'Charlie', 'group'),
+    ).resolves.toBeUndefined();
   });
 });

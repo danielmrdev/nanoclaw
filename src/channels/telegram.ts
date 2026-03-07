@@ -544,9 +544,9 @@ ${systemStatusBody}`;
       return;
     }
 
-    try {
-      const numericId = jid.replace(/^tg:/, '');
+    const numericId = jid.replace(/^tg:/, '');
 
+    try {
       const html = markdownToTelegramHtml(text);
 
       // Telegram has a 4096 character limit per message — split if needed
@@ -565,6 +565,14 @@ ${systemStatusBody}`;
       logger.info({ jid, length: text.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+      try {
+        await this.bot!.api.sendMessage(
+          numericId,
+          'No pude enviar la respuesta (formato no soportado por Telegram).',
+        );
+      } catch (notifyErr) {
+        logger.error({ jid, notifyErr }, 'Failed to send error notification to user');
+      }
     }
   }
 
@@ -621,32 +629,32 @@ export async function sendPoolMessage(
     return;
   }
 
+  const numericId = chatId.replace(/^tg:/, '');
+  const senderKey = `${groupFolder}:${sender}`;
+
+  // Assign pool bot to sender round-robin if not already assigned
+  let botInfo = senderBotMap.get(senderKey);
+  if (!botInfo) {
+    const botIndex = nextPoolIndex % poolApis.length;
+    botInfo = {
+      botIndex,
+      botName: sender, // Will be updated when we get the actual bot name
+    };
+    senderBotMap.set(senderKey, botInfo);
+    nextPoolIndex++;
+  }
+
+  const poolApi = poolApis[botInfo.botIndex];
+
+  // Attempt to rename bot to sender name
   try {
-    const numericId = chatId.replace(/^tg:/, '');
-    const senderKey = `${groupFolder}:${sender}`;
+    await poolApi.setMyName(sender);
+    logger.debug({ sender, chatId }, 'Pool bot renamed');
+  } catch (err) {
+    logger.debug({ sender, chatId, err }, 'Failed to rename pool bot (may not have permissions)');
+  }
 
-    // Assign pool bot to sender round-robin if not already assigned
-    let botInfo = senderBotMap.get(senderKey);
-    if (!botInfo) {
-      const botIndex = nextPoolIndex % poolApis.length;
-      botInfo = {
-        botIndex,
-        botName: sender, // Will be updated when we get the actual bot name
-      };
-      senderBotMap.set(senderKey, botInfo);
-      nextPoolIndex++;
-    }
-
-    const poolApi = poolApis[botInfo.botIndex];
-
-    // Attempt to rename bot to sender name
-    try {
-      await poolApi.setMyName(sender);
-      logger.debug({ sender, chatId }, 'Pool bot renamed');
-    } catch (err) {
-      logger.debug({ sender, chatId, err }, 'Failed to rename pool bot (may not have permissions)');
-    }
-
+  try {
     // Send message through the assigned pool bot
     const html = markdownToTelegramHtml(text);
     const MAX_LENGTH = 4096;
@@ -664,5 +672,13 @@ export async function sendPoolMessage(
     logger.info({ jid: chatId, sender, poolIndex: botInfo.botIndex }, 'Pool message sent');
   } catch (err) {
     logger.error({ chatId, sender, err }, 'Failed to send pool message');
+    try {
+      await poolApi.sendMessage(
+        numericId,
+        'No pude enviar la respuesta (formato no soportado por Telegram).',
+      );
+    } catch (notifyErr) {
+      logger.error({ chatId, notifyErr }, 'Failed to send pool error notification');
+    }
   }
 }
