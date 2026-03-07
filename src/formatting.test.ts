@@ -237,6 +237,80 @@ describe('trigger gating (requiresTrigger interaction)', () => {
   });
 });
 
+// --- markdownToTelegramHtml — tables ---
+
+describe('markdownToTelegramHtml — tables', () => {
+  it('renders simple 2-column table as <pre>-wrapped ASCII table', () => {
+    const input = '| Col1 | Col2 |\n|---|---|\n| a | b |';
+    const result = markdownToTelegramHtml(input);
+    expect(result).toContain('<pre>');
+    expect(result).toContain('</pre>');
+    expect(result).toContain('Col1');
+    expect(result).toContain('Col2');
+    expect(result).toContain('a');
+    expect(result).toContain('b');
+    expect(result).not.toContain('<table>');
+    expect(result).not.toContain('<tr>');
+    expect(result).not.toContain('<td>');
+    expect(result).not.toContain('<th>');
+  });
+
+  it('pads columns to max width', () => {
+    const input = '| Short | A very long header |\n|---|---|\n| x | y |';
+    const result = markdownToTelegramHtml(input);
+    // The table text inside <pre> should have padded columns
+    const preContent = result.replace(/<pre>([\s\S]*?)<\/pre>/, '$1');
+    // Each row should have the same number of | separators
+    const lines = preContent.trim().split('\n');
+    expect(lines.length).toBeGreaterThanOrEqual(3); // header, separator, body
+    // All rows should start with | and end with |
+    for (const line of lines) {
+      expect(line.trimEnd()).toMatch(/^\|.*\|$/);
+    }
+  });
+
+  it('escapes HTML-special chars inside <pre>', () => {
+    // Use a cell with literal < > & that are not valid HTML tags
+    // so Marked treats them as text (not inline HTML)
+    const input = '| Col |\n|---|\n| a & b |';
+    const result = markdownToTelegramHtml(input);
+    // The & in the cell text must be escaped as &amp; inside the <pre>
+    const preContent = result.replace(/<pre>([\s\S]*?)<\/pre>/, '$1');
+    expect(preContent).toContain('&amp;');
+    // No raw <b> tags should appear inside the <pre>
+    expect(result).not.toMatch(/<pre>[\s\S]*<b>[\s\S]*<\/pre>/);
+  });
+
+  it('strips inline formatting (bold) to plain text in table cells', () => {
+    const input = '| **bold** | normal |\n|---|---|\n| a | b |';
+    const result = markdownToTelegramHtml(input);
+    // Should not contain <b> inside <pre>
+    const preContent = result.replace(/<pre>([\s\S]*?)<\/pre>/, '$1');
+    expect(preContent).toContain('bold');
+    expect(preContent).not.toContain('<b>');
+  });
+
+  it('renders single-column table correctly', () => {
+    const input = '| Only |\n|---|\n| one |';
+    const result = markdownToTelegramHtml(input);
+    expect(result).toContain('<pre>');
+    expect(result).toContain('Only');
+    expect(result).toContain('one');
+    expect(result).not.toContain('<table>');
+  });
+
+  it('renders table with empty cells with correct padding', () => {
+    const input = '| A | B |\n|---|---|\n| filled |  |';
+    const result = markdownToTelegramHtml(input);
+    expect(result).toContain('<pre>');
+    const preContent = result.replace(/<pre>([\s\S]*?)<\/pre>/, '$1');
+    const lines = preContent.trim().split('\n');
+    // All rows must have same | count (consistent column structure)
+    const pipeCounts = lines.map((l) => (l.match(/\|/g) || []).length);
+    expect(Math.min(...pipeCounts)).toBe(Math.max(...pipeCounts));
+  });
+});
+
 // --- markdownToTelegramHtml — nested lists ---
 
 describe('markdownToTelegramHtml — nested lists', () => {

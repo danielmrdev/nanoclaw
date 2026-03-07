@@ -95,6 +95,44 @@ function buildRenderer(): Renderer {
     return renderList(token as unknown as ListToken, 0, this.parser) + '\n\n';
   };
 
+  renderer.table = function ({ header, rows }) {
+    // Extract plain text per cell: parse inline tokens → strip HTML tags → first line only
+    const cellText = (tokens: import('marked').Token[]): string => {
+      const parsed = this.parser.parseInline(tokens);
+      return parsed.replace(/<[^>]+>/g, '').split('\n')[0];
+    };
+
+    const headerTexts = header.map((cell) => cellText(cell.tokens));
+    const bodyRows = rows.map((row) => row.map((cell) => cellText(cell.tokens)));
+
+    // Compute per-column max width (min 3 for separator dashes)
+    const colCount = headerTexts.length;
+    const colWidths: number[] = headerTexts.map((h, i) => {
+      const bodyMax = bodyRows.reduce(
+        (max, row) => Math.max(max, (row[i] ?? '').length),
+        0,
+      );
+      return Math.max(h.length, bodyMax, 3);
+    });
+
+    // Build rows
+    const pad = (s: string, w: number) => s + ' '.repeat(w - s.length);
+
+    const headerRow =
+      '| ' + headerTexts.map((h, i) => pad(h, colWidths[i])).join(' | ') + ' |';
+    const separatorRow =
+      '| ' + colWidths.map((w) => '-'.repeat(w)).join(' | ') + ' |';
+    const dataRows = bodyRows.map(
+      (row) =>
+        '| ' +
+        row.map((cell, i) => pad(cell, colWidths[i])).join(' | ') +
+        ' |',
+    );
+
+    const tableText = [headerRow, separatorRow, ...dataRows].join('\n');
+    return `<pre>${escapeHtml(tableText)}</pre>\n`;
+  };
+
   renderer.hr = function () {
     return '—\n';
   };
