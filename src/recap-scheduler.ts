@@ -184,51 +184,8 @@ export function ensureRecapTasks(): void {
   }
 }
 
-function buildDailyRecapPrompt(groupFolder: string): string {
-  return `You are running as an isolated recap agent for group "${groupFolder}".
-
-Your job: Generate a daily memory recap for today.
-
-Available function: archiveOldConversations from nanoclaw/src/conversation-archiver.ts
-Signature: archiveOldConversations({ groupFolder: string }) => { archived: string[], skipped: string[] }
-
-Instructions:
-1. Read all conversation messages from SQLite for today (the past 24 hours).
-   Use the getMessagesSince() function or read from the IPC/filesystem — use whatever is available in your context.
-2. Synthesize the day's conversations into a structured Markdown recap.
-3. Write the recap to: groups/${groupFolder}/daily/YYYY-MM/YYYY-MM-DD.md
-   (use today's actual date for the path, e.g. daily/2026-03/2026-03-05.md)
-4. Use atomic write: write to the .tmp file first, then rename.
-5. After writing the recap, update the last_recap_timestamp in SQLite for this group's daily cadence.
-6. Run conversation archival after the recap file is confirmed written:
-   - Import and call archiveOldConversations({ groupFolder: "${groupFolder}" }) from src/conversation-archiver.ts
-   - Log: "Archived: {result.archived.length} files, skipped: {result.skipped.length} files"
-   - Do NOT delete any files — archiveOldConversations only moves them to conversations/archive/YYYY-MM/
-   - If archival fails, log the error and continue (recap is already written — don't undo it)
-
-Recap format:
-\`\`\`markdown
-# Daily Recap — YYYY-MM-DD
-
-## Summary
-[2-3 sentence overview of the day]
-
-## Key Topics
-- [topic]: [brief description]
-
-## Decisions & Actions
-- [decision or action taken]
-
-## Facts to Remember
-- [durable fact worth persisting]
-
-## Open Questions
-- [anything unresolved]
-\`\`\`
-
-If there are no messages today, write: "# Daily Recap — YYYY-MM-DD\\n\\nNo conversations today."
-
-Do NOT send any message to the chat. This task runs silently.`;
+function buildDailyRecapPrompt(_groupFolder: string): string {
+  return '[host-side: daily recap]';
 }
 
 function buildWeeklyRecapPrompt(groupFolder: string): string {

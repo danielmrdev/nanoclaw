@@ -1,6 +1,7 @@
 import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
+import path from 'path';
 
 import {
   ASSISTANT_NAME,
@@ -13,6 +14,7 @@ import {
   runContainerAgent,
   writeTasksSnapshot,
 } from './container-runner.js';
+import { archiveOldConversations } from './conversation-archiver.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -24,6 +26,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { generateDailyRecap } from './recap-generator.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 export interface SchedulerDependencies {
@@ -37,6 +40,51 @@ export interface SchedulerDependencies {
     groupFolder: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+}
+
+async function runDailyRecapHostSide(
+  task: ScheduledTask,
+  groupDir: string,
+): Promise<{ result: string | null; error: string | null }> {
+  const date = new Date().toISOString().slice(0, 10);
+  try {
+    const recapResult = await generateDailyRecap({
+      groupFolder: task.group_folder,
+      chatJid: task.chat_jid,
+      date,
+      groupsDir: path.dirname(groupDir),
+    });
+    logger.info(
+      { groupFolder: task.group_folder, date, path: recapResult.path },
+      'Host-side daily recap complete',
+    );
+
+    // RECAP-02: archival runs immediately after recap (last_recap_timestamp now set)
+    const archiveResult = archiveOldConversations({
+      groupFolder: task.group_folder,
+      groupsDir: path.dirname(groupDir),
+    });
+    logger.info(
+      {
+        groupFolder: task.group_folder,
+        archived: archiveResult.archived.length,
+        skipped: archiveResult.skipped.length,
+      },
+      'Post-recap archival complete',
+    );
+
+    // Update task prompt to sentinel on first host-side run (one-time cleanup)
+    updateTask(task.id, { prompt: '[host-side: daily recap]' });
+
+    return {
+      result: `Daily recap written: ${recapResult.path}. Archived: ${archiveResult.archived.length} files.`,
+      error: null,
+    };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error({ taskId: task.id, error }, 'Host-side daily recap failed');
+    return { result: null, error };
+  }
 }
 
 async function runTask(
@@ -66,6 +114,34 @@ async function runTask(
     return;
   }
   fs.mkdirSync(groupDir, { recursive: true });
+
+  // Host-side bypass: daily recap runs without container (0 tokens)
+  if (task.id.startsWith('recap-daily-')) {
+    const { result: hostResult, error: hostError } = await runDailyRecapHostSide(task, groupDir);
+
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: Date.now() - startTime,
+      status: hostError ? 'error' : 'success',
+      result: hostResult,
+      error: hostError,
+    });
+
+    let nextRun: string | null = null;
+    if (task.schedule_type === 'cron') {
+      const interval = CronExpressionParser.parse(task.schedule_value, { tz: TIMEZONE });
+      nextRun = interval.next().toISOString();
+    }
+
+    const resultSummary = hostError
+      ? `Error: ${hostError}`
+      : hostResult
+        ? hostResult.slice(0, 200)
+        : 'Completed';
+    updateTaskAfterRun(task.id, nextRun, resultSummary);
+    return;
+  }
 
   logger.info(
     { taskId: task.id, group: task.group_folder },
