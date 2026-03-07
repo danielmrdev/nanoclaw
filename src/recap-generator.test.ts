@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Mock the db module before importing recap-generator
 const mockDb = {};
 vi.mock('./db.js', () => ({
-  getMessagesForDateRange: vi.fn(),
   setLastRecapTimestamp: vi.fn(),
   isSemanticsEnabled: vi.fn(() => false),
   getDb: vi.fn(() => mockDb),
@@ -43,9 +42,8 @@ import {
   monthToFirstDay,
   semesterToFirstDay,
 } from './recap-generator.js';
-import { getMessagesForDateRange, setLastRecapTimestamp, isSemanticsEnabled } from './db.js';
+import { setLastRecapTimestamp, isSemanticsEnabled } from './db.js';
 import { embed, storeEmbedding } from './embedding-service.js';
-import { GROUPS_DIR } from './config.js';
 
 // Helper to set GROUPS_DIR dynamically in tests
 let tempDir: string;
@@ -89,11 +87,8 @@ describe('isoWeekToMonday', () => {
 // ---------------------------------------------------------------------------
 
 describe('generateDailyRecap', () => {
-  it('writes stub file when no messages exist', async () => {
-    vi.mocked(getMessagesForDateRange).mockReturnValue([]);
-
+  it('writes stub file when no conversations exist', async () => {
     const groupFolder = 'test-group';
-    const groupDir = path.join(tempDir, groupFolder);
 
     const result = await generateDailyRecap({
       groupFolder,
@@ -108,43 +103,81 @@ describe('generateDailyRecap', () => {
     expect(content).toContain('Daily Recap — 2026-03-05');
   });
 
-  it('writes file with sender names when messages exist', async () => {
-    vi.mocked(getMessagesForDateRange).mockReturnValue([
-      {
-        id: '1',
-        chat_jid: 'test@g.us',
-        sender: 'sender1',
-        sender_name: 'Alice',
-        content: 'Hello world',
-        timestamp: '2026-03-05T10:00:00.000Z',
-      },
-      {
-        id: '2',
-        chat_jid: 'test@g.us',
-        sender: 'sender2',
-        sender_name: 'Bob',
-        content: 'Hi there',
-        timestamp: '2026-03-05T10:05:00.000Z',
-      },
-    ]);
+  it('writes stub file when conversations/ directory is missing', async () => {
+    const groupFolder = 'no-conv-dir-group';
+    // Do not create the conversations/ directory at all
 
     const result = await generateDailyRecap({
-      groupFolder: 'test-group',
+      groupFolder,
       chatJid: 'test@g.us',
       date: '2026-03-05',
       groupsDir: tempDir,
     });
 
     const content = fs.readFileSync(result.path, 'utf-8');
-    expect(content).toContain('Alice');
-    expect(content).toContain('Bob');
+    expect(content).toContain('No conversations today');
+  });
+
+  it('writes file with conversation content when conversation files exist', async () => {
+    const groupFolder = 'test-group';
+    const convDir = path.join(tempDir, groupFolder, 'conversations');
+    fs.mkdirSync(convDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(convDir, '2026-03-05-project-planning.md'),
+      '# Project Planning\n\nAlice: Hello world\nBob: Hi there\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(convDir, '2026-03-05-follow-up.md'),
+      '# Follow Up\n\nAlice: Any updates?\n',
+      'utf-8',
+    );
+
+    const result = await generateDailyRecap({
+      groupFolder,
+      chatJid: 'test@g.us',
+      date: '2026-03-05',
+      groupsDir: tempDir,
+    });
+
+    const content = fs.readFileSync(result.path, 'utf-8');
     expect(content).toContain('Hello world');
     expect(content).toContain('Hi there');
+    expect(content).toContain('Any updates?');
+  });
+
+  it('does not include conversations from other dates', async () => {
+    const groupFolder = 'test-group';
+    const convDir = path.join(tempDir, groupFolder, 'conversations');
+    fs.mkdirSync(convDir, { recursive: true });
+
+    // A file for today
+    fs.writeFileSync(
+      path.join(convDir, '2026-03-05-today.md'),
+      '# Today\n\nToday content.\n',
+      'utf-8',
+    );
+    // A file for yesterday — should be excluded
+    fs.writeFileSync(
+      path.join(convDir, '2026-03-04-yesterday.md'),
+      '# Yesterday\n\nYesterday content.\n',
+      'utf-8',
+    );
+
+    const result = await generateDailyRecap({
+      groupFolder,
+      chatJid: 'test@g.us',
+      date: '2026-03-05',
+      groupsDir: tempDir,
+    });
+
+    const content = fs.readFileSync(result.path, 'utf-8');
+    expect(content).toContain('Today content');
+    expect(content).not.toContain('Yesterday content');
   });
 
   it('writes file to correct path: daily/YYYY-MM/YYYY-MM-DD.md', async () => {
-    vi.mocked(getMessagesForDateRange).mockReturnValue([]);
-
     const result = await generateDailyRecap({
       groupFolder: 'my-group',
       chatJid: 'test@g.us',
@@ -157,8 +190,6 @@ describe('generateDailyRecap', () => {
   });
 
   it('does NOT leave a .tmp file behind (atomic write)', async () => {
-    vi.mocked(getMessagesForDateRange).mockReturnValue([]);
-
     const result = await generateDailyRecap({
       groupFolder: 'test-group',
       chatJid: 'test@g.us',
@@ -170,8 +201,6 @@ describe('generateDailyRecap', () => {
   });
 
   it('calls setLastRecapTimestamp after successful write', async () => {
-    vi.mocked(getMessagesForDateRange).mockReturnValue([]);
-
     await generateDailyRecap({
       groupFolder: 'test-group',
       chatJid: 'test@g.us',
@@ -617,7 +646,6 @@ describe('generateAnnualRecap', () => {
 describe('embedding hooks — isSemanticsEnabled=false', () => {
   it('generateDailyRecap returns written:true when semantics disabled', async () => {
     vi.mocked(isSemanticsEnabled).mockReturnValue(false);
-    vi.mocked(getMessagesForDateRange).mockReturnValue([]);
 
     const result = await generateDailyRecap({
       groupFolder: 'test-group',
@@ -648,7 +676,6 @@ describe('embedding hooks — isSemanticsEnabled=false', () => {
 describe('embedding hooks — isSemanticsEnabled=true, embed returns vector', () => {
   it('generateDailyRecap calls storeEmbedding with correct sourceType and relative path', async () => {
     vi.mocked(isSemanticsEnabled).mockReturnValue(true);
-    vi.mocked(getMessagesForDateRange).mockReturnValue([]);
     const fakeVec = new Float32Array(768).fill(0.1);
     vi.mocked(embed).mockResolvedValue(fakeVec);
 
@@ -773,7 +800,6 @@ describe('embedding hooks — isSemanticsEnabled=true, embed returns vector', ()
 describe('embedding hooks — isSemanticsEnabled=true, embed returns null (Ollama down)', () => {
   it('generateDailyRecap still returns written:true when embed returns null', async () => {
     vi.mocked(isSemanticsEnabled).mockReturnValue(true);
-    vi.mocked(getMessagesForDateRange).mockReturnValue([]);
     vi.mocked(embed).mockResolvedValue(null);
 
     const result = await generateDailyRecap({

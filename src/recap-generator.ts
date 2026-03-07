@@ -3,16 +3,14 @@ import path from 'path';
 
 import Database from 'better-sqlite3';
 
-import { ASSISTANT_NAME, GROUPS_DIR } from './config.js';
+import { GROUPS_DIR } from './config.js';
 import {
   getDb,
-  getMessagesForDateRange,
   isSemanticsEnabled,
   setLastRecapTimestamp,
 } from './db.js';
 import { embed, storeEmbedding } from './embedding-service.js';
 import { logger } from './logger.js';
-import { NewMessage } from './types.js';
 
 export interface RecapOptions {
   groupFolder: string;
@@ -50,31 +48,42 @@ export interface RecapResult {
 
 // --- Daily Recap ---
 
+/**
+ * Read all conversation files for a given date from the conversations/ directory.
+ * Files are named YYYY-MM-DD-{slug}.md — filters by date prefix.
+ * Returns array of file contents, sorted by filename.
+ */
+function readConversationsForDate(groupDir: string, date: string): string[] {
+  const conversationsDir = path.join(groupDir, 'conversations');
+  if (!fs.existsSync(conversationsDir)) return [];
+
+  const files = fs
+    .readdirSync(conversationsDir)
+    .filter((f) => f.startsWith(`${date}-`) && f.endsWith('.md'))
+    .sort();
+
+  return files.map((f) =>
+    fs.readFileSync(path.join(conversationsDir, f), 'utf-8'),
+  );
+}
+
 export async function generateDailyRecap(
   opts: DailyRecapOptions,
 ): Promise<RecapResult> {
-  const { groupFolder, chatJid, date, groupsDir = GROUPS_DIR } = opts;
+  const { groupFolder, date, groupsDir = GROUPS_DIR } = opts;
   const resolvedDb: Database.Database = opts.db ?? getDb();
 
-  // Parse date boundaries (inclusive of full day, UTC)
-  const dayStart = new Date(`${date}T00:00:00.000Z`).toISOString();
-  const dayEnd = new Date(`${date}T23:59:59.999Z`).toISOString();
+  const [year, month] = date.split('-');
+  const groupDir = path.join(groupsDir, groupFolder);
 
-  const messages = getMessagesForDateRange(
-    chatJid,
-    dayStart,
-    dayEnd,
-    ASSISTANT_NAME,
-  );
+  const conversations = readConversationsForDate(groupDir, date);
 
   const content =
-    messages.length > 0
-      ? buildDailyContent(date, messages)
+    conversations.length > 0
+      ? buildDailyContent(date, conversations)
       : `# Daily Recap — ${date}\n\nNo conversations today.\n`;
 
   // Write to daily/YYYY-MM/YYYY-MM-DD.md
-  const [year, month] = date.split('-');
-  const groupDir = path.join(groupsDir, groupFolder);
   const targetDir = path.join(groupDir, 'daily', `${year}-${month}`);
   const targetPath = path.join(targetDir, `${date}.md`);
   const tmpPath = `${targetPath}.tmp`;
@@ -83,7 +92,8 @@ export async function generateDailyRecap(
   fs.writeFileSync(tmpPath, content, 'utf-8');
   fs.renameSync(tmpPath, targetPath);
 
-  // Update coverage timestamp
+  // Update coverage timestamp (unlocks archiveOldConversations)
+  const dayStart = new Date(`${date}T00:00:00.000Z`).toISOString();
   setLastRecapTimestamp(groupFolder, 'daily', dayStart);
 
   // Optional: promote durable facts to knowledge/_index.md (RECAP-04)
@@ -99,25 +109,21 @@ export async function generateDailyRecap(
   return { written: true, path: targetPath };
 }
 
-function buildDailyContent(date: string, messages: NewMessage[]): string {
-  // Group messages into a readable transcript
-  const transcript = messages
-    .map(
-      (m) => `**${m.sender_name}** [${m.timestamp.slice(11, 16)}]: ${m.content}`,
-    )
-    .join('\n');
+function buildDailyContent(date: string, conversations: string[]): string {
+  const conversationsSection = conversations.join('\n\n---\n\n');
 
   return [
     `# Daily Recap — ${date}`,
     '',
     '## Summary',
-    `${messages.length} messages exchanged today.`,
+    `${conversations.length} conversation(s) today.`,
     '',
-    '## Conversation Log',
-    transcript,
+    '## Conversations',
+    '',
+    conversationsSection,
     '',
     '## Key Topics',
-    '- (review above log)',
+    '- (review above)',
     '',
     '## Decisions & Actions',
     '- (none recorded)',
