@@ -5,7 +5,7 @@ import path from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Channel, NewMessage, OnInboundMessage, OnChatMetadata } from '../types.js';
 import { logger } from '../logger.js';
-import { GROUPS_DIR, WEBSOCKET_FILES_PORT, WEBSOCKET_HOST } from '../config.js';
+import { GROUPS_DIR, WEBSOCKET_FILES_PORT } from '../config.js';
 
 const WS_JID = 'ws:better-work';
 const MAX_BUFFER = 50;
@@ -157,7 +157,7 @@ export class WebSocketChannel implements Channel {
     // Start HTTP file server first (independent of WS)
     this.startFileServer();
 
-    this.wss = new WebSocketServer({ host: WEBSOCKET_HOST, port: this.port });
+    this.wss = new WebSocketServer({ host: '127.0.0.1', port: this.port });
 
     // CRITICAL: register chat metadata immediately so SQLite FK constraint is satisfied
     this.opts.onChatMetadata(
