@@ -231,17 +231,36 @@ Do NOT send any message to the chat. This task runs silently.`;
 function buildMonthlyRecapPrompt(groupFolder: string): string {
   return `You are running as an isolated recap agent for group "${groupFolder}".
 
-Your job: Generate a monthly memory recap, then clean up old archived conversation files.
+Your job: Generate a monthly memory recap by synthesizing the weekly notes for the current month.
 
 Instructions:
 1. Determine the current month in ISO format: YYYY-MM (e.g. "2026-03" for March 2026).
-2. Import generateMonthlyRecap from src/recap-generator.ts.
-   Call it: generateMonthlyRecap({ groupFolder: "${groupFolder}", chatJid: context.chatJid, monthIso: "YYYY-MM" })
-3. Log the result (e.g. "Monthly recap written: {result.path}").
-4. After the monthly recap is confirmed written, import deleteOldArchives from src/conversation-archiver.ts.
-   Call it: deleteOldArchives({ groupFolder: "${groupFolder}" })
-5. Log: "Archive cleanup: deleted {result.deleted.length} files, skipped {result.skipped.length} files"
-6. Handle errors gracefully — if generateMonthlyRecap or deleteOldArchives throws, log the error and continue. Do not propagate the error.
+2. Read the weekly note files for this month from /workspace/group/daily/weekly/YYYY-Wnn.md.
+   Determine which weeks belong to this month by checking whether the Monday of each ISO week falls within the month boundaries (first day of month, inclusive — first day of next month, exclusive).
+3. Synthesize the weekly notes into a monthly recap.
+4. Write the recap to: /workspace/group/daily/monthly/YYYY-MM.md
+   (e.g. /workspace/group/daily/monthly/2026-03.md)
+5. Use atomic write: write to /workspace/group/daily/monthly/YYYY-MM.md.tmp first, then rename.
+6. Handle errors gracefully — log and continue if any step throws. Do not propagate errors.
+
+Recap format:
+\`\`\`markdown
+# Monthly Recap — YYYY-MM
+
+## Overview
+[3-5 sentence narrative of the month]
+
+## Recurring Themes
+- [theme]: [pattern observed across weeks]
+
+## Key Decisions
+- [decision]: [context and outcome]
+
+## Durable Knowledge
+- [fact or insight worth keeping long-term]
+\`\`\`
+
+If no weekly notes exist for this month, write: "# Monthly Recap — YYYY-MM\\n\\nNo weekly notes available."
 
 Do NOT send any message to the chat. This task runs silently.`;
 }
@@ -249,16 +268,38 @@ Do NOT send any message to the chat. This task runs silently.`;
 function buildSemesterRecapPrompt(groupFolder: string): string {
   return `You are running as an isolated recap agent for group "${groupFolder}".
 
-Your job: Generate a semester memory recap.
+Your job: Generate a semester memory recap by synthesizing the monthly notes for the current semester.
 
 Instructions:
-1. Determine the current semester based on the current month:
+1. Determine the current semester based on today's month:
    - January–June → "YYYY-S1" (e.g. "2026-S1")
    - July–December → "YYYY-S2" (e.g. "2026-S2")
-2. Import generateSemesterRecap from src/recap-generator.ts.
-   Call it: generateSemesterRecap({ groupFolder: "${groupFolder}", chatJid: context.chatJid, semesterIso: "YYYY-S1" })
-3. Log the result (e.g. "Semester recap written: {result.path}").
-4. Handle errors gracefully — log and continue if it throws.
+2. Read the 6 monthly note files for this semester from /workspace/group/daily/monthly/YYYY-MM.md.
+   S1: months 01–06, S2: months 07–12. Skip months that have no file.
+3. Synthesize the monthly notes into a semester recap.
+4. Write the recap to: /workspace/group/daily/semester/YYYY-Sn.md
+   (e.g. /workspace/group/daily/semester/2026-S1.md)
+5. Use atomic write: write to /workspace/group/daily/semester/YYYY-Sn.md.tmp first, then rename.
+6. Handle errors gracefully — log and continue if any step throws. Do not propagate errors.
+
+Recap format:
+\`\`\`markdown
+# Semester Recap — YYYY-Sn
+
+## Overview
+[3-5 sentence narrative of the semester]
+
+## Recurring Themes
+- [theme]: [pattern observed across months]
+
+## Key Decisions
+- [decision]: [context and outcome]
+
+## Durable Knowledge
+- [fact or insight worth keeping long-term]
+\`\`\`
+
+If no monthly notes exist for this semester, write: "# Semester Recap — YYYY-Sn\\n\\nNo monthly notes available."
 
 Do NOT send any message to the chat. This task runs silently.`;
 }
@@ -266,14 +307,38 @@ Do NOT send any message to the chat. This task runs silently.`;
 function buildAnnualRecapPrompt(groupFolder: string): string {
   return `You are running as an isolated recap agent for group "${groupFolder}".
 
-Your job: Generate an annual memory recap.
+Your job: Generate an annual memory recap by synthesizing the semester notes for the current year.
 
 Instructions:
-1. Determine the current year as a number (e.g. 2026).
-2. Import generateAnnualRecap from src/recap-generator.ts.
-   Call it: generateAnnualRecap({ groupFolder: "${groupFolder}", chatJid: context.chatJid, year: 2026 })
-3. Log the result (e.g. "Annual recap written: {result.path}").
-4. Handle errors gracefully — log and continue if it throws.
+1. Determine the current year (e.g. 2026).
+2. Read the semester note files from:
+   - /workspace/group/daily/semester/YYYY-S1.md
+   - /workspace/group/daily/semester/YYYY-S2.md
+   Skip any file that does not exist.
+3. Synthesize the semester notes into an annual recap.
+4. Write the recap to: /workspace/group/daily/annual/YYYY.md
+   (e.g. /workspace/group/daily/annual/2026.md)
+5. Use atomic write: write to /workspace/group/daily/annual/YYYY.md.tmp first, then rename.
+6. Handle errors gracefully — log and continue if any step throws. Do not propagate errors.
+
+Recap format:
+\`\`\`markdown
+# Annual Recap — YYYY
+
+## Overview
+[3-5 sentence narrative of the year]
+
+## Recurring Themes
+- [theme]: [pattern observed across semesters]
+
+## Key Decisions
+- [decision]: [context and outcome]
+
+## Durable Knowledge
+- [fact or insight worth keeping long-term]
+\`\`\`
+
+If no semester notes exist for this year, write: "# Annual Recap — YYYY\\n\\nNo semester notes available."
 
 Do NOT send any message to the chat. This task runs silently.`;
 }
